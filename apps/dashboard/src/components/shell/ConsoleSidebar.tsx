@@ -72,6 +72,7 @@ const LS_COLLAPSED = "inalpha-sidebar-collapsed";
  */
 export function ConsoleSidebar() {
   const t = useTranslations("nav");
+  const tLlm = useTranslations("llm");
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -151,6 +152,7 @@ export function ConsoleSidebar() {
       >
         <SidebarBody
           t={t}
+          llmLabel={tLlm("sidebarEntry")}
           pathname={pathname}
           collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed}
@@ -175,6 +177,7 @@ export function ConsoleSidebar() {
       >
         <SidebarBody
           t={t}
+          llmLabel={tLlm("sidebarEntry")}
           pathname={pathname}
           collapsed={false}
           onNavigate={() => setMobileOpen(false)}
@@ -189,6 +192,7 @@ export function ConsoleSidebar() {
 /** 栏体(品牌 + 导航 + 控制区)—— 桌面栏与移动抽屉共用。 */
 function SidebarBody({
   t,
+  llmLabel,
   pathname,
   collapsed,
   onToggleCollapsed,
@@ -197,6 +201,7 @@ function SidebarBody({
   buildDate,
 }: {
   t: ReturnType<typeof useTranslations>;
+  llmLabel: string;
   pathname: string;
   collapsed: boolean;
   onToggleCollapsed?: () => void;
@@ -443,7 +448,7 @@ function SidebarBody({
                 }}
               >
                 <Key className="size-4" strokeWidth={1.75} />
-                LLM 配置
+                {llmLabel}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -482,7 +487,7 @@ function SidebarBody({
                 }}
               >
                 <Key className="size-4" strokeWidth={1.75} />
-                LLM 配置
+                {llmLabel}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
