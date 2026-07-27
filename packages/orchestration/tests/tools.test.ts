@@ -19,6 +19,7 @@ import {
   paperListStrategyRunDecisionsTool,
   paperListStrategyRunsTool,
   paperRunBacktestTool,
+  paperPromoteAndStartStrategyTool,
   paperStartStrategyTool,
   paperStopStrategyTool,
   researchDeepDiveTool,
@@ -874,7 +875,122 @@ describe("factor.timing / score / catalog", () => {
 // D-11 · live runner tools
 // ────────────────────────────────────────────────────────────────────
 
-describe("paper.start_strategy / stop / list", () => {
+describe("paper.promote_and_start_strategy / start_strategy / stop / list", () => {
+  const candidateId = "550e8400-e29b-41d4-a716-446655440000";
+  const candidate = {
+    id: candidateId,
+    code: "class X(Strategy): pass",
+    code_hash: "abc",
+    description: "x",
+    author: "llm",
+    author_id: null,
+    status: "candidate",
+    metrics: { sharpe: 1.5 },
+    fitness: 0.85,
+    last_backtest_run_id: null,
+    audit: { ok: true },
+    created_at: "2026-05-25T00:00:00Z",
+    updated_at: "2026-05-25T00:00:00Z",
+  };
+  const runningRun = {
+    id: "run-1", candidate_id: candidateId, account_id: "acc-1", status: "running",
+    venue: "binance", symbol: "BTC/USDT", timeframe: "1h", params: { fast: 10 },
+    last_bar_ts: null, cumulative_pnl: 0, error_log: [],
+    started_at: "2026-06-02T00:00:00Z", stopped_at: null,
+  };
+
+  it("uses one tool call to promote then start the requested runner", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    mockFetch(async (url, init) => {
+      calls.push({ url, body: JSON.parse((init?.body as string) ?? "{}") });
+      if (url.includes(`/strategy_candidates/${candidateId}`) && !url.includes("promote")) {
+        return new Response(JSON.stringify(candidate), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/promote")) {
+        return new Response(JSON.stringify({ ...candidate, status: "promoted" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(runningRun), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const result = await paperPromoteAndStartStrategyTool.execute!({
+      candidateId,
+      reason: "2026-Q2 BTC 1h fitness=0.85 vs baseline=0.32, drawdown<10%",
+      venue: "binance",
+      symbol: "BTC/USDT",
+      timeframe: "1h",
+      params: { fast: 10 },
+      allocation: 5000,
+    } as never, ctx()) as { promotedNow: boolean; run: { status: string } };
+
+    expect(calls.map(({ url }) => url)).toEqual([
+      expect.stringContaining(`/strategy_candidates/${candidateId}`),
+      expect.stringContaining(`/strategy_candidates/${candidateId}/promote`),
+      expect.stringContaining("/strategy_runs"),
+    ]);
+    expect(calls[2].body).toMatchObject({
+      candidate_id: candidateId, venue: "binance", symbol: "BTC/USDT", timeframe: "1h",
+      params: { fast: 10 }, allocation: 5000,
+    });
+    expect(result).toMatchObject({ promotedNow: true, run: { status: "running" } });
+  });
+
+  it("skips promotion for an already promoted candidate", async () => {
+    const urls: string[] = [];
+    mockFetch(async (url) => {
+      urls.push(url);
+      if (url.includes(`/strategy_candidates/${candidateId}`)) {
+        return new Response(JSON.stringify({ ...candidate, status: "promoted" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify(runningRun), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+
+    const result = await paperPromoteAndStartStrategyTool.execute!({
+      candidateId,
+      reason: "2026-Q2 BTC 1h fitness=0.85 vs baseline=0.32, drawdown<10%",
+      venue: "binance", symbol: "BTC/USDT", timeframe: "1h",
+    } as never, ctx()) as { promotedNow: boolean; run: { status: string } };
+
+    expect(urls).toHaveLength(2);
+    expect(urls.some((url) => url.includes("/promote"))).toBe(false);
+    expect(result).toMatchObject({ promotedNow: false, run: { status: "running" } });
+  });
+
+  it("rejects a candidate that cannot be promoted before creating a runner", async () => {
+    const urls: string[] = [];
+    mockFetch(async (url) => {
+      urls.push(url);
+      return new Response(JSON.stringify({ ...candidate, status: "rejected" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await expect(paperPromoteAndStartStrategyTool.execute!({
+      candidateId,
+      reason: "2026-Q2 BTC 1h fitness=0.85 vs baseline=0.32, drawdown<10%",
+      venue: "binance", symbol: "BTC/USDT", timeframe: "1h",
+    } as never, ctx())).rejects.toThrow("must be 'candidate' or 'promoted'");
+    expect(urls).toHaveLength(1);
+  });
+
+  it("keeps a successful promotion visible when runner startup fails", async () => {
+    mockFetch(async (url) => {
+      if (url.includes(`/strategy_candidates/${candidateId}`) && !url.includes("promote")) {
+        return new Response(JSON.stringify(candidate), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/promote")) {
+        return new Response(JSON.stringify({ ...candidate, status: "promoted" }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ code: "SYMBOL_RUN_CONFLICT", message: "runner exists", details: {} }), { status: 409, headers: { "Content-Type": "application/json" } });
+    });
+
+    await expect(paperPromoteAndStartStrategyTool.execute!({
+      candidateId,
+      reason: "2026-Q2 BTC 1h fitness=0.85 vs baseline=0.32, drawdown<10%",
+      venue: "binance", symbol: "BTC/USDT", timeframe: "1h",
+    } as never, ctx())).rejects.toMatchObject({ code: "SYMBOL_RUN_CONFLICT", status: 409 });
+  });
+
   it("start_strategy POSTs to /strategy_runs with candidate_id + market", async () => {
     let capturedUrl = "";
     let capturedBody = "";

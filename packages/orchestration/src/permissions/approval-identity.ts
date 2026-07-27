@@ -44,6 +44,18 @@ export const APPROVAL_IDENTITY_FIELDS: Readonly<Record<string, readonly string[]
   // promote 的身份只看 candidateId；reason 是自由文本审计字段，每次重调措辞会变，
   // 不能让它参与审批匹配，否则用户每"允许"一次 LLM 换个说法又被拦一次。
   "paper.promote_candidate": ["candidateId"],
+  // 启动模拟盘的确认覆盖“转正 + runner 执行范围”。reason 仅审计，不应因措辞变化重问；
+  // 但 symbol、参数、额度等改变会影响真实运行行为，必须产生新的审批身份。
+  "paper.promote_and_start_strategy": [
+    "candidateId",
+    "venue",
+    "symbol",
+    "timeframe",
+    "params",
+    "tradingMode",
+    "leverage",
+    "allocation",
+  ],
 };
 
 /**

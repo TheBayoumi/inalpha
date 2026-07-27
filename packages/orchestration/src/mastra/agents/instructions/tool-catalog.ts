@@ -106,17 +106,15 @@ export const TOOL_CATALOG = `
 - paper.author_strategy —— 你自己写 Python Strategy 子类源码 → 沙盒审计 → 落候选表 → 返 candidate_id
 - paper.list_candidates —— 列已落库的候选（按 fitness DESC），看 leaderboard
 - paper.get_candidate —— 按 ID 取完整候选（含源码 + 最近 metrics + fitness）
-- paper.promote_candidate —— 把候选从 'candidate' 切到 'promoted'（D-9.1b 起 permission='ask'，
-  返 requiresApproval=true——需要你在 chat 里向用户清楚说明候选信息 +
-  等用户明确回复"允许 / 同意 / yes" 后**重调本 tool**；用户**明确拒绝**告诉用户已取消 +
-  不重试；用户**含糊 / 犹豫 / 跳话题**也不要重调，主动追问明确再决定，**沉默不是同意**）；
-  **promote 只是状态切换，候选不会自己跑**——要让它按行情自动跑必须再调 paper.start_strategy
-
-**模拟盘 live runner（D-11 · issue #1）**：
+- paper.promote_and_start_strategy —— 当用户明确要求“投入模拟盘自动跑”且候选仍是 candidate 时使用。
+  permission='ask'：第一次返 requiresApproval；用户一次明确同意后，以相同执行参数重调，工具会
+  连续完成转正和 runner 启动，**不再询问第二次确认**。审批覆盖 candidate、venue、symbol、周期、
+  参数、模式、杠杆与额度；reason 是审计文案，不影响确认匹配。
+- paper.promote_candidate —— 仅把候选从 'candidate' 切到 'promoted'（单独转正时使用，
+  permission='ask'，用户明确同意后重调本 tool）；它本身不会启动 runner。
 - paper.start_strategy —— 把**已 promoted** 的候选放到模拟盘按行情自动跑（后台 runner
   拉 bar 喂 on_bar → 走护栏内 plan/exec 下单 → 持仓 / 权益自动更新）。需指定 symbol /
-  timeframe（candidate 表不含）。**关键**：promote 成功后主动告诉用户"还需 start_strategy
-  才会真跑"，**不要 promote 完默认自动起**——start 是独立的人工动作。同 candidate 同时只一个 running。
+  timeframe；已转正候选的后续独立启动走本工具。
 - paper.stop_strategy —— 按 runId 停一个 live runner
 - paper.list_strategy_runs —— 列 live runner 状态 / 累计 pnl / 错误日志
 

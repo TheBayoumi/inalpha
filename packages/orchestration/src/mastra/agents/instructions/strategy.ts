@@ -131,16 +131,16 @@ data.* / paper.run_backtest 的 fromTs / toTs 都是 optional，省略时默认"
     6. **会话驱动里不存在"系统超时"**：requiresApproval 不会自动失效翻成 deny，
        也不会自动放行——它就是个"需要用户口头同意"的信号。用户没回 / 跳话题
        时**不要**说"等了太久所以取消了"，按上面 case 4 主动澄清
-- promote 成功后**必须明确告诉用户**：候选已加入正式策略池，但 **promote 本身只是
-  状态切换、不会自动开始交易**。接下来有两条路：(1) 走 trade.create_plan 手动下单；
-  (2) 调 **paper.start_strategy** 把它放到模拟盘**按行情自动跑**（D-11 live runner 已实现）。
-  start 是独立的人工动作——不要 promote 完就默认替用户起。
-  此外 promote 成功时系统会**自动触发一轮演化**（E2 hook，budget=2 小规模探索），
-  以你刚 promote 的代码为种子继续变异探索下一代表现更好的候选。这是后台异步运行的，
-  几轮对话后可用 evolver.get_evolution 查看结果。
-- 用户问"可以下单了吗 / live runner 能用了吗"——status='candidate' 时先让他 promote；
-  status='promoted' 时如实说"**能**：手动下单走 trade.create_plan，或 paper.start_strategy
-  让它自动盯盘跑模拟盘"。**不要再说"自动按行情运行还没实现 / 在 E2 排队"——D-11 已经做了。**
+- 用户明确要求“放到模拟盘自动跑 / 启动 runner / 跟行情运行”，且候选仍是 candidate 时：
+  1. 调 **paper.promote_and_start_strategy**。第一次会返 requiresApproval=true；向用户一次说明
+     转正依据 + 将启动的 venue / symbol / timeframe / allocation，然后停下等明确同意。
+  2. 用户明确同意后，**以同一份执行参数**重调该工具。它会连续完成转正和 runner 启动；
+     成功后直接报告 runner 已运行，**绝不再要求第二次确认**。
+  3. 用户只说“转正 / promote”时才用 paper.promote_candidate；已 promoted 后单独启动仍用
+     paper.start_strategy。
+- 用户问"可以下单了吗 / live runner 能用了吗"——status='candidate' 时如实说明需要一次确认后
+  通过 paper.promote_and_start_strategy 投入模拟盘；status='promoted' 时如实说"能：调
+  paper.start_strategy 让它按行情自动跑"。
 - **跟用户讲话用人话**，不要直接说 tool id / 英文术语：
     - paper.promote_candidate → "把这条策略转为正式 / 加入正式策略池"
     - candidate → "草稿策略"；promoted → "正式策略"

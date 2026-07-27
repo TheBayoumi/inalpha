@@ -159,6 +159,50 @@ describe("ask-path e2e · 审批身份投影（promote reason 措辞变化不重
   });
 });
 
+describe("ask-path e2e · 复合模拟盘启动只确认一次", () => {
+  it("首次 ask 后，确认重调即执行转正和 runner 启动，不再返回第二次 requiresApproval", async () => {
+    const { events, cache, store, runner } = makeEnv();
+    const exec = vi.fn().mockResolvedValue({
+      promotedNow: true,
+      candidate: { status: "promoted" },
+      run: { status: "running" },
+    });
+    const tool = { id: "paper.promote_and_start_strategy", description: "", execute: exec };
+    const wrapped = withHooks(tool, {
+      runner,
+      permissionResolver: () => "ask",
+      askCache: cache,
+      pendingApprovals: store,
+      getSessionId: () => "thread-A",
+    });
+    const input = {
+      candidateId: "c-42",
+      reason: "首次审计说明，包含回测与风控指标",
+      venue: "binance",
+      symbol: "BTC/USDT",
+      timeframe: "1h",
+      params: { fast: 10 },
+      tradingMode: "spot",
+      leverage: 1,
+      allocation: 5000,
+    };
+
+    const first = (await wrapped.execute!(input)) as { requiresApproval: boolean };
+    expect(first.requiresApproval).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
+
+    const second = await wrapped.execute!({ ...input, reason: "确认后改写审计文案，不改变运行范围" });
+    expect(second).toMatchObject({ promotedNow: true, run: { status: "running" } });
+    expect(exec).toHaveBeenCalledOnce();
+    expect(eventsOf(events, "ask_marked")).toHaveLength(1);
+    expect(eventsOf(events, "ask_consumed")).toHaveLength(1);
+
+    store.clearAll();
+    cache.clear();
+  });
+});
+
+
 describe("ask-path e2e · 跨 sessionId 不复用", () => {
   it("A 用户 mark 不被 B 用户 consume；两条独立 entry", async () => {
     const { events, cache, store, runner } = makeEnv();
