@@ -3,6 +3,7 @@
  */
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2, Key, Settings, AlertTriangle } from "lucide-react";
 import type { LLMProvider, UserLLMConfigDisplay } from "@/lib/user-preferences";
@@ -44,6 +45,7 @@ export function clearLLMConfigDismissed(): void {
 }
 
 export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useTranslations("llm");
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,15 +71,15 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
       setLoading(true);
       setError(null);
       const res = await fetch("/api/user/settings");
-      if (!res.ok) throw new Error("Failed to fetch settings");
+      if (!res.ok) throw new Error(t("loadFailed", { error: res.status }));
       const data = await res.json();
       setSettings(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(err instanceof Error ? err.message : t("loadFailed", { error: "unknown" }));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open) {
@@ -96,21 +98,21 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      if (!res.ok) throw new Error("保存失败");
+      if (!res.ok) throw new Error(t("saveFailed"));
       const { id } = (await res.json()) as { id?: string };
-      if (!id) throw new Error("保存失败：未返回配置 ID");
+      if (!id) throw new Error(t("saveMissingId"));
       const activateRes = await fetch("/api/user/settings/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config_id: id }),
       });
-      if (!activateRes.ok) throw new Error("配置已保存，但激活失败");
+      if (!activateRes.ok) throw new Error(t("saveActivationFailed"));
       setShowAddForm(false);
       setFormData({ provider: "deepseek", model: "", api_key: "", custom_base_url: "", custom_provider_name: "", label: "" });
       await fetchSettings();
-      toast.success("配置已保存");
+      toast.success(t("saved"));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "保存失败");
+      toast.error(err instanceof Error ? err.message : t("saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -136,11 +138,11 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config_id: configId }),
       });
-      toast.success("已切换配置");
+      toast.success(t("activated"));
     } catch {
       // 失败时回滚
       fetchSettings();
-      toast.error("切换失败");
+      toast.error(t("activationFailed"));
     }
   }
 
@@ -149,12 +151,12 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
     setDeleting(true);
     try {
       const res = await fetch(`/api/user/settings/${deleteTarget.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("删除失败");
+      if (!res.ok) throw new Error(t("deleteFailed"));
       setDeleteTarget(null);
       await fetchSettings();
-      toast.success("配置已删除");
+      toast.success(t("deleted"));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "删除失败");
+      toast.error(err instanceof Error ? err.message : t("deleteFailed"));
     } finally {
       setDeleting(false);
     }
@@ -167,19 +169,19 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="size-4 text-cyan" strokeWidth={1.75} />
-              LLM 配置
+              {t("title")}
             </DialogTitle>
           </DialogHeader>
 
           {loading && (
             <div className="flex items-center justify-center py-8">
-              <div className="text-sm text-fg-muted">加载中...</div>
+              <div className="text-sm text-fg-muted">{t("loading")}</div>
             </div>
           )}
 
           {error && (
             <div className="rounded-md border border-fox-red/30 bg-fox-red/10 px-4 py-3 text-sm text-fox-red">
-              加载失败: {error}
+              {error}
             </div>
           )}
 
@@ -206,13 +208,13 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
                           </span>
                           {config.is_active && (
                             <span className="rounded-full bg-cyan/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-cyan">
-                              当前
+                              {t("active")}
                             </span>
                           )}
                         </div>
                         <div className="space-y-0.5 text-xs text-fg-muted">
-                          <div>模型: {config.model || "默认"}</div>
-                          <div>Key: {config.api_key_masked}</div>
+                          <div>{t("model", { model: config.model || t("defaultModel") })}</div>
+                          <div>{t("key", { key: config.api_key_masked })}</div>
                         </div>
                       </div>
 
@@ -224,7 +226,7 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
                             e.stopPropagation();
                             setDeleteTarget(config);
                           }}
-                          title="删除"
+                          title={t("delete")}
                           className="size-7 hover:text-fox-red hover:bg-fox-red/10"
                         >
                           <Trash2 className="size-3.5" strokeWidth={1.75} />
@@ -237,7 +239,7 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
                 {(!settings || settings.configs.length === 0) && (
                   <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border-subtle py-8">
                     <Key className="size-8 text-fg-muted/40" strokeWidth={1.5} />
-                    <p className="text-sm text-fg-muted">暂无配置，请添加 API Key</p>
+                    <p className="text-sm text-fg-muted">{t("noConfigs")}</p>
                   </div>
                 )}
               </div>
@@ -246,7 +248,7 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
               {showAddForm ? (
                 <div className="space-y-4 rounded-lg border border-border-subtle p-4">
                   <div className="space-y-2">
-                    <Label htmlFor="provider">供应商</Label>
+                    <Label htmlFor="provider">{t("provider")}</Label>
                     <Select
                       id="provider"
                       value={formData.provider}
@@ -258,14 +260,14 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
                       <option value="gemini">Gemini</option>
                       <option value="kimi">Kimi</option>
                       <option value="zhipu">智谱 AI</option>
-                      <option value="custom">自定义端点</option>
+                      <option value="custom">{t("customProvider")}</option>
                     </Select>
                   </div>
 
                   {formData.provider === "custom" && (
                     <>
                       <div className="space-y-2">
-                        <Label htmlFor="custom_base_url">自定义端点 URL</Label>
+                        <Label htmlFor="custom_base_url">{t("customEndpoint")}</Label>
                         <Input
                           id="custom_base_url"
                           type="text"
@@ -275,31 +277,31 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="custom_provider_name">自定义名称</Label>
+                        <Label htmlFor="custom_provider_name">{t("customName")}</Label>
                         <Input
                           id="custom_provider_name"
                           type="text"
                           value={formData.custom_provider_name}
                           onChange={(e) => setFormData({ ...formData, custom_provider_name: e.target.value })}
-                          placeholder="某中转站"
+                          placeholder={t("customNamePlaceholder")}
                         />
                       </div>
                     </>
                   )}
 
                   <div className="space-y-2">
-                    <Label htmlFor="model">模型（可选）</Label>
+                    <Label htmlFor="model">{t("modelOptional")}</Label>
                     <Input
                       id="model"
                       type="text"
                       value={formData.model}
                       onChange={(e) => setFormData({ ...formData, model: e.target.value })}
-                      placeholder="留空使用默认"
+                      placeholder={t("modelPlaceholder")}
                     />
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="api_key">API Key *</Label>
+                    <Label htmlFor="api_key">{t("apiKey")}</Label>
                     <Input
                       id="api_key"
                       type="password"
@@ -311,17 +313,17 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
 
                   <div className="flex gap-2 pt-2">
                     <Button onClick={handleAddConfig} disabled={saving || !formData.api_key.trim()}>
-                      {saving ? "保存中..." : "保存"}
+                      {saving ? t("saving") : t("save")}
                     </Button>
                     <Button variant="outline" onClick={() => setShowAddForm(false)}>
-                      取消
+                      {t("cancel")}
                     </Button>
                   </div>
                 </div>
               ) : (
                 <Button variant="outline" onClick={() => setShowAddForm(true)} className="w-full border-dashed">
                   <Plus className="size-4" strokeWidth={1.75} />
-                  新增配置
+                  {t("addConfig")}
                 </Button>
               )}
             </div>
@@ -335,18 +337,18 @@ export function LLMConfigModal({ open, onClose }: { open: boolean; onClose: () =
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
               <AlertTriangle className="size-5 text-fox-red" strokeWidth={1.75} />
-              确认删除
+              {t("confirmDelete")}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              确定要删除配置 <span className="font-medium text-fg">{deleteTarget?.custom_provider_name || deleteTarget?.provider}</span> 吗？
-              <br />
-              <span className="text-xs">此操作无法撤销。</span>
+              {t("deleteDescription", {
+                provider: deleteTarget?.custom_provider_name || deleteTarget?.provider || "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfig} disabled={deleting}>
-              {deleting ? "删除中..." : "删除"}
+              {deleting ? t("deleting") : t("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

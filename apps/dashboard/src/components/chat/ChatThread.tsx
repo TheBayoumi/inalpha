@@ -59,6 +59,7 @@ export function ChatThread({
   onSwitchThread: (id: string) => void;
 }) {
   const t = useTranslations("chat");
+  const tLlm = useTranslations("llm");
 
   const hook = useCopilotChatInternal();
   const messages = (hook.messages ?? []) as unknown as AGMessage[];
@@ -91,14 +92,14 @@ export function ChatThread({
       if (url.includes("/api/copilotkit") && res.status === 428) {
         window.dispatchEvent(new CustomEvent("inalpha:open-llm-settings"));
       } else if (url.includes("/api/copilotkit") && res.status === 401) {
-        setChatError("当前 LLM API Key 无效或暂时不可用，请检查配置后重试");
+        setChatError(tLlm("invalidKey"));
       }
       return res;
     };
     (patched as { __inalphaLLMCheck?: boolean }).__inalphaLLMCheck = true;
     window.fetch = patched;
     return () => { if (window.fetch === patched) window.fetch = orig; };
-  }, []);
+  }, [tLlm]);
 
   const loadedThreadRef = useRef<string | null>(null);
   const setMessagesRef = useRef(setMessages);
