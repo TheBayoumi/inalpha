@@ -83,6 +83,8 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
     // D-9 · 候选 → 正式策略（ADR-0018 / D-9.1b：askUserChoice 接通后改回 ask）
     // 后端硬校验仍在（fitness IS NOT NULL + status='candidate'）作为第二道防线
     "paper.promote_candidate",
+    // 用户明确要求投入模拟盘时，单次确认覆盖候选转正与 runner 启动。
+    "paper.promote_and_start_strategy",
 
     // 账户外生资金事件：改钱=改绩效口径，必须人点头（流水留痕是第二道防线）。
     // reset 是破坏性操作（删全部持仓行），后端另有 running-run 409 硬守门。

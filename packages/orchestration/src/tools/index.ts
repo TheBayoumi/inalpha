@@ -35,6 +35,7 @@ import {
   paperListStrategyRunsTool,
   paperResetAccountTool,
   paperRunBacktestTool,
+  paperPromoteAndStartStrategyTool,
   paperStartStrategyTool,
   paperStopStrategyTool,
   paperTools,
@@ -148,6 +149,7 @@ export {
   paperListStrategyRunDecisionsTool,
   paperListStrategyRunsTool,
   paperPromoteCandidateTool,
+  paperPromoteAndStartStrategyTool,
   paperResetAccountTool,
   paperRunBacktestTool,
   paperStartStrategyTool,
@@ -177,6 +179,7 @@ export {
 export const allTools = [
   ...dataTools,
   ...paperTools,
+  paperPromoteAndStartStrategyTool,
   ...paperAuthoringTools,
   ...tradePlanTools,
   ...researchTools,
@@ -290,6 +293,8 @@ export const orchestratorToolList = [
   paperGetCandidateTool,
   // D-9 · 候选 → 正式（permission 默认 ask，弹气泡二次确认）
   paperPromoteCandidateTool,
+  // D-11 · 明确投入模拟盘时，一次确认连续完成转正与 runner 启动。
+  paperPromoteAndStartStrategyTool,
   // D-11 · live runner（issue #1）：promoted 候选按行情自动跑 + 决策复盘
   paperStartStrategyTool,
   paperStopStrategyTool,

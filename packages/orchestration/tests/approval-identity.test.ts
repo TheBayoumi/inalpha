@@ -23,6 +23,35 @@ describe("projectApprovalInput", () => {
     expect(a).not.toEqual(b);
   });
 
+  it("模拟盘复合启动忽略审计 reason，但绑定完整执行范围", () => {
+    const base = {
+      candidateId: "c-42",
+      venue: "binance",
+      symbol: "BTC/USDT",
+      timeframe: "1h",
+      params: { fast: 10 },
+      tradingMode: "spot",
+      leverage: 1,
+      allocation: 5000,
+    };
+    const first = projectApprovalInput("paper.promote_and_start_strategy", {
+      ...base,
+      reason: "第一次审计措辞",
+    });
+    const rewrittenReason = projectApprovalInput("paper.promote_and_start_strategy", {
+      ...base,
+      reason: "确认后改写的审计措辞",
+    });
+    const changedAllocation = projectApprovalInput("paper.promote_and_start_strategy", {
+      ...base,
+      allocation: 8000,
+      reason: "同一审计措辞",
+    });
+
+    expect(first).toEqual(rewrittenReason);
+    expect(first).not.toEqual(changedAllocation);
+  });
+
   it("未登记 tool:原样返回完整 input", () => {
     const input = { foo: 1, bar: "z" };
     expect(projectApprovalInput("some.other_tool", input)).toBe(input);

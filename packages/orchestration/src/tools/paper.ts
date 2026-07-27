@@ -1003,6 +1003,62 @@ export const paperListCashFlowsTool = createTool({
 // D-11 · live runner（issue #1）
 // ────────────────────────────────────────────────────────────────────
 
+export const paperPromoteAndStartStrategyTool = createTool({
+  id: "paper.promote_and_start_strategy",
+  description: `
+    把已验证的策略候选转正并立即投入模拟盘自动运行。这个工具把“转正 + 启动 runner”
+    视为同一项用户动作：第一次调用只请求一次明确确认；确认后重调相同参数，会连续完成两步。
+
+    何时用：
+    - 用户明确要求“把这个策略放到模拟盘自动跑 / 启动 runner / 跟行情运行”，且候选还未 promoted
+
+    何时不用：
+    - 用户只要求转正 → paper.promote_candidate
+    - 候选已 promoted 且只需启动 → paper.start_strategy
+    - 只想下单 → trade.create_plan / approve / execute
+
+    坑：
+    - reason 仅用于转正审计；改执行参数（标的、周期、额度、模式、杠杆或策略参数）必须重新确认
+    - 转正成功但启动因资金不足、标的冲突等失败时，候选保持 promoted；修正参数后可用 paper.start_strategy 重试
+  `.trim(),
+  inputSchema: z.object({
+    candidateId: z.string().uuid().describe("待转正并启动的候选 id"),
+    reason: z.string().min(20).max(1000).describe("转正审计理由，含回测与风控依据"),
+    venue: z.string().describe("数据源 venue，必须与 symbol 市场匹配"),
+    symbol: SymbolSchema,
+    timeframe: TimeframeSchema.default("1h"),
+    params: z.record(z.string(), z.unknown()).optional().describe("策略参数，缺省用策略默认值"),
+    tradingMode: z.enum(["spot", "perp"]).default("spot"),
+    leverage: z.number().int().min(1).max(20).default(1),
+    allocation: z.number().positive().optional().describe("模拟盘 runner 的资金额度"),
+  }),
+  execute: async (inputData, ctx) => {
+    const tc = ctx?.requestContext as ToolRequestContext | undefined;
+    const client = await getClient(tc);
+    const candidate = await client.getCandidate(inputData.candidateId);
+    if (candidate.status !== "candidate" && candidate.status !== "promoted") {
+      throw new Error(
+        `candidate ${inputData.candidateId} is '${candidate.status}', must be 'candidate' or 'promoted' to start a strategy`,
+      );
+    }
+    const promotedNow = candidate.status === "candidate";
+    const promoted = promotedNow
+      ? await client.promoteCandidate(inputData.candidateId, inputData.reason)
+      : candidate;
+    const run = await client.startStrategy({
+      candidateId: inputData.candidateId,
+      venue: inputData.venue,
+      symbol: inputData.symbol,
+      timeframe: inputData.timeframe,
+      params: inputData.params,
+      tradingMode: inputData.tradingMode,
+      leverage: inputData.leverage,
+      allocation: inputData.allocation,
+    });
+    return { promotedNow, candidate: promoted, run };
+  },
+});
+
 export const paperStartStrategyTool = createTool({
   id: "paper.start_strategy",
   description: `
