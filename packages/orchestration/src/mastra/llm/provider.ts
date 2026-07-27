@@ -276,7 +276,13 @@ export function buildLLMForUser(userConfig: UserLLMConfig | null): LanguageModel
  * @returns 代理 LanguageModel
  */
 export function buildUserAwareModel(): LanguageModel {
-  const defaultModel = buildLLM();
+  const defaultModel = AUTH_ENABLED ? null : buildLLM();
+  const proxyTarget = (defaultModel ?? {
+    specificationVersion: "v1",
+    provider: "inalpha-user",
+    modelId: "user-configured",
+    defaultObjectGenerationMode: undefined,
+  }) as LanguageModel;
   // 以 ALS store 为 key 缓存 per-request model；无 config 时返回 null（用 default）。
   const modelCache = new Map<UserLLMConfig | null | undefined, LanguageModel | null>();
 
@@ -290,9 +296,9 @@ export function buildUserAwareModel(): LanguageModel {
       throw new Error("AUTH_ENABLED=true 但用户未配置 LLM API Key");
     }
 
-    if (!config) return defaultModel;
+    if (!config) return defaultModel!;
     const cached = modelCache.get(config);
-    if (cached !== undefined) return cached ?? defaultModel;
+    if (cached !== undefined) return cached ?? defaultModel!;
     try {
       console.log("[llm] Building model for user config:", config.provider, config.model);
       const m = buildLLMForUser(config) as unknown as LanguageModel;
@@ -305,14 +311,14 @@ export function buildUserAwareModel(): LanguageModel {
   }
 
   // Proxy：拦截 doGenerate / doStream，其他属性透传 defaultModel。
-  return new Proxy(defaultModel, {
+  return new Proxy(proxyTarget, {
     get(_target, prop, receiver) {
       if (prop === "doGenerate" || prop === "doStream") {
         const m = resolveModel();
         if (m === defaultModel) return Reflect.get(defaultModel, prop, receiver);
         return Reflect.get(m, prop, receiver);
       }
-      return Reflect.get(defaultModel, prop, receiver);
+      return Reflect.get(proxyTarget, prop, receiver);
     },
   }) as unknown as LanguageModel;
 }
