@@ -39,4 +39,5 @@ ENV NODE_ENV=production
 RUN pnpm exec mastra build --dir src/mastra
 
 EXPOSE 4111
-CMD ["node", ".mastra/output/index.mjs"]
+USER root
+CMD ["sh", "-c", "mkdir -p /app/.data /app/.data-backups && chown -R node:node /app/.data /app/.data-backups && exec su node -s /bin/sh -c 'node .mastra/output/index.mjs'"]
