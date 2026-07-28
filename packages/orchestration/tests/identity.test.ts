@@ -1,12 +1,27 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { mintServiceToken } from "../src/auth.js";
+import { AUTH_SUB_KEY } from "../src/hooks/with-hooks.js";
 import { identityMiddleware } from "../src/mastra/identity.js";
 
 const TEST_KEY = "unique-test-key-must-never-reach-logs";
 
+function appWithRequestContext(requestContext: Map<string, unknown>) {
+  const app = new Hono();
+  app.use("*", async (context, next) => {
+    (context.set as (key: string, value: unknown) => void)("requestContext", requestContext);
+    await next();
+  });
+  app.use("*", identityMiddleware);
+  app.get("/", (context) => context.text("ok"));
+  return app;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  vi.resetModules();
 });
 
 describe("identityMiddleware", () => {
@@ -36,5 +51,48 @@ describe("identityMiddleware", () => {
       provider: "anthropic",
       model: "claude-test",
     });
+  });
+
+  it("injects the verified Bearer subject into request context", async () => {
+    const requestContext = new Map<string, unknown>();
+    const response = await appWithRequestContext(requestContext).request("/", {
+      headers: { Authorization: `Bearer ${await mintServiceToken({ sub: "user:alice" })}` },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestContext.get(AUTH_SUB_KEY)).toBe("user:alice");
+  });
+
+  it("does not inject a subject for an invalid Bearer token", async () => {
+    const requestContext = new Map<string, unknown>();
+    const response = await appWithRequestContext(requestContext).request("/", {
+      headers: { Authorization: "Bearer invalid-token" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestContext.has(AUTH_SUB_KEY)).toBe(false);
+  });
+});
+
+describe("buildUserAwareModel", () => {
+  it("requires a user LLM configuration when authentication is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    vi.resetModules();
+    const { buildUserAwareModel } = await import("../src/mastra/llm/provider.js");
+
+    expect(() => buildUserAwareModel().doGenerate).toThrow("用户未配置 LLM API Key");
+  });
+
+  it("uses an ALS-scoped user configuration when authentication is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    vi.resetModules();
+    const { buildUserAwareModel, userLLMStore } = await import("../src/mastra/llm/provider.js");
+    const model = buildUserAwareModel();
+
+    expect(() => userLLMStore.run({
+      id: "config-1",
+      provider: "anthropic",
+      api_key: "user-key",
+    }, () => model.doGenerate)).not.toThrow();
   });
 });

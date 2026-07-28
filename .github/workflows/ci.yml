@@ -24,12 +24,39 @@ jobs:
         run: bash scripts/check-consistency.sh
       - name: Validate self-host Compose
         run: |
-          cp infra/.env.selfhost.example infra/.env.selfhost
-          for key in POSTGRES_PASSWORD REDIS_PASSWORD JWT_SECRET LLM_CONFIG_ENCRYPTION_KEY; do
-            sed -i "s/^${key}=.*/${key}=ci-test-secret/" infra/.env.selfhost
-          done
+          bash scripts/selfhost.sh init
+          test "$(stat --format=%a infra/.env.selfhost)" = "600"
+          ! grep -Eq '__[A-Z_]+__' infra/.env.selfhost
           ENV_FILE=.env.selfhost docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost config --quiet
           rm infra/.env.selfhost
+
+  selfhost-smoke:
+    name: self-host · build + health smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize self-host environment
+        run: |
+          bash scripts/selfhost.sh init
+          test "$(stat --format=%a infra/.env.selfhost)" = "600"
+          ! grep -Eq '__[A-Z_]+__' infra/.env.selfhost
+      - name: Build and start self-host stack
+        run: |
+          docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost build
+          docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost up -d --wait --wait-timeout 600
+      - name: Create self-host user
+        run: |
+          printf 'smoke-password' | docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost run --rm -T paper \
+            uv run python scripts/create_user.py --email smoke@example.invalid --subject console:smoke --password-stdin
+      - name: Diagnose failed self-host smoke
+        if: failure()
+        run: |
+          docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost ps
+          docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost logs
+      - name: Remove self-host stack
+        if: always()
+        run: docker compose -f infra/docker-compose.prod.yml -f infra/docker-compose.selfhost.yml --env-file infra/.env.selfhost down -v --remove-orphans
 
   orchestration-typecheck:
     name: orchestration · typecheck + test
