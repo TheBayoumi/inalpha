@@ -14,17 +14,22 @@ export function LLMConfigGate() {
     const openSettings = () => setOpen(true);
     window.addEventListener("inalpha:open-llm-settings", openSettings);
 
+    let mounted = true;
     if (!localStorage.getItem(LS_DISMISSED)) {
       void fetch("/api/user/settings")
         .then((response) => response.ok ? response.json() : null)
         .then((settings) => {
-          if (settings && (!settings.configs || settings.configs.length === 0)) {
+          if (mounted && settings && (!settings.configs || settings.configs.length === 0)) {
             setOpen(true);
           }
-        });
+        })
+        .catch(() => {});
     }
 
-    return () => window.removeEventListener("inalpha:open-llm-settings", openSettings);
+    return () => {
+      mounted = false;
+      window.removeEventListener("inalpha:open-llm-settings", openSettings);
+    };
   }, []);
 
   return (

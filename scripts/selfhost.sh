@@ -105,7 +105,7 @@ case "$command" in
     ;;
   up)
     require_env
-    "${COMPOSE[@]}" up -d --build
+    "${COMPOSE[@]}" up -d --build --wait --wait-timeout 600
     "${COMPOSE[@]}" ps
     ;;
   down)
