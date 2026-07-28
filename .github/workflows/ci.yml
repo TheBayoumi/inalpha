@@ -82,7 +82,7 @@ jobs:
         run: pnpm test
 
   web-typecheck:
-    name: web · typecheck + test + build
+    name: web · typecheck + build
     runs-on: ubuntu-latest
     defaults:
       run:
