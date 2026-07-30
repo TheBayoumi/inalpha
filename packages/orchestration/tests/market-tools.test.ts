@@ -9,6 +9,7 @@ import {
   dataGetMarketMoversTool,
   dataGetMarketNewsTool,
   dataGetMarketSectorsTool,
+  dataGetNewsTool,
 } from "../src/tools/index.js";
 
 const TEST_TOKEN = "test-token-doesnt-need-to-be-real";
@@ -35,6 +36,35 @@ function mockFetch(impl: (url: string, init?: RequestInit) => Promise<Response>)
 const ctx = (authToken: string | undefined = TEST_TOKEN): never =>
   ({ requestContext: { authToken } }) as never;
 
+describe("data.get_news", () => {
+  it("forwards PIT window, kinds, symbol, and token", async () => {
+    let capturedUrl = "";
+    mockFetch(async (url) => {
+      capturedUrl = String(url);
+      return new Response(
+        JSON.stringify({ market: "us", symbol: "AAPL", items: [], providers: [] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    await dataGetNewsTool.execute!(
+      {
+        market: "us",
+        symbol: "AAPL",
+        asOf: "2026-07-28T10:00:00Z",
+        since: "2026-07-01T00:00:00Z",
+        kinds: ["disclosure", "media"],
+        limit: 12,
+      },
+      ctx(),
+    );
+    expect(capturedUrl).toContain("/news?");
+    expect(capturedUrl).toContain("market=us");
+    expect(capturedUrl).toContain("symbol=AAPL");
+    expect(capturedUrl).toContain("as_of=2026-07-28T10%3A00%3A00Z");
+    expect(capturedUrl).toContain("kinds=disclosure%2Cmedia");
+  });
+});
+
 describe("data.get_market_news", () => {
   it("calls /market/news with market+limit and forwards token", async () => {
     let capturedUrl = "";
@@ -57,6 +87,24 @@ describe("data.get_market_news", () => {
     expect(capturedAuth).toBe(`Bearer ${TEST_TOKEN}`);
     expect((out.items as unknown[]).length).toBe(1);
   });
+
+  it.each(["us", "hk", "jp", "kr", "au", "in", "uk", "de", "fr", "ca", "br", "global", "crypto"] as const)(
+    "routes %s market news through unified endpoint",
+    async (market) => {
+      let capturedUrl = "";
+      mockFetch(async (url) => {
+        capturedUrl = String(url);
+        return new Response(JSON.stringify({ market, items: [], providers: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      });
+      await dataGetMarketNewsTool.execute!({ market, limit: 7 }, ctx());
+      expect(capturedUrl).toContain("/news?");
+      expect(capturedUrl).toContain(`market=${market}`);
+      expect(capturedUrl).toContain("kinds=market_news%2Cmedia");
+    },
+  );
 
   it("upstream 502 returns error field instead of throwing", async () => {
     mockFetch(async () =>
@@ -133,6 +181,7 @@ describe("data.get_market_movers", () => {
 
 describe("tool ids", () => {
   it("market tool ids follow data.<verb> convention", () => {
+    expect(dataGetNewsTool.id).toBe("data.get_news");
     expect(dataGetMarketNewsTool.id).toBe("data.get_market_news");
     expect(dataGetMarketSectorsTool.id).toBe("data.get_market_sectors");
     expect(dataGetMarketMoneyflowTool.id).toBe("data.get_market_moneyflow");

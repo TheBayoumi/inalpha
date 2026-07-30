@@ -23,6 +23,9 @@ export const TOOL_CATALOG = `
   其他市场返 yahoo 格式（venue 字段标明配哪个数据源）。
   **你已判断出市场分类时显式传 venue**（美股/港股/全球 → yfinance，A股 → baostock）；
   query 的语言 ≠ 市场——中文名问美股公司极常见，别把市场判断丢给 auto 兜底。
+- **data.get_news —— 多市场单标的新闻与官方披露**。A股走东财、美股 SEC+Yahoo、
+  港股 HKEX+Yahoo、Crypto 走已注册财经 feed；需要历史截止点时传 asOf。响应的
+  providers/status 与 is_partial 区分“无结果”和“源站故障”，后者不能解释为没有消息。
 
 **Web 搜索**（D-10 新 · 零 key，ddgs 聚合多引擎）：
 - web.search —— 搜索互联网。query 用自然语言；backend 默认 auto，中文自动走 bing。
@@ -44,9 +47,10 @@ export const TOOL_CATALOG = `
   对 A股用 venue=baostock（支持 1d/1wk/1mo + 分钟级 5m/15m/30m/1h），美股/港股用 venue=yfinance
 
 **市场级行情（D-12+ 新 · 行情归因专用，无需 symbol）**：
-- data.get_market_news —— 市场级财经快讯流。用户问"某市场 / 大盘今天有什么消息 /
-  为什么涨跌"时**优先于 web.search_news**（专业财经快讯源，免搜索引擎噪声）。
-  不用于单标的新闻深挖（标的级仍走 web.search_news + web.fetch）
+- data.get_market_news —— 多市场财经快讯流。用户问“某市场 / 大盘今天有什么消息 /
+  为什么涨跌”时优先于 web.search_news；支持全球市场分类。A股用东财、Crypto 用
+  专业 feed，其余股票市场使用代表性指数/ETF 新闻代理，引用时必须带代理口径。
+  单标的消息或官方披露改用 data.get_news。
 - data.get_market_sectors —— 行业板块涨跌幅榜（涨跌两端 + 领涨股）。
   判断"普涨还是结构性、哪些板块领涨领跌"；归因个股时先看它所属板块在榜单的位置
 - data.get_market_moneyflow —— 跨境资金流（A股=沪深港通）。资金面维度。
@@ -55,8 +59,8 @@ export const TOOL_CATALOG = `
 - data.get_market_movers —— 当日强势股 + 人工题材标签。归因"什么主线在涨"的
   最直接证据（对 tags 聚类看热点）。坑：标签是媒体归纳**非因果实锤**，
   措辞用"市场归因于 / 题材标签显示"
-- 四个工具按 market 参数路由（同"全球市场覆盖"分类）；当前仅实装 cn（A股）。
-  **未实装的市场不要硬调**（会返 400），降级走 web.search_news + 该市场代表性指数 get_bars
+- sectors / moneyflow / movers 当前仅实装 cn（A股）；其它市场只可调用 get_market_news，
+  其余盘面维度降级走 web.search_news + 代表性指数 get_bars。
 
 **有效因子择时（接现成因子库 pandas-ta / Alpha101 / qlib）**：
 - factor.timing —— 给一个标的/周期，返回**当前最有效的因子**（按时序 Rank IC 排序）+ 读数 + 方向 + 强度。

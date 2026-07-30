@@ -35,6 +35,10 @@ export type Ticker = {
   stale_seconds: number;
 };
 
+export type NewsMarket =
+  | "cn" | "us" | "hk" | "jp" | "kr" | "au" | "in" | "uk"
+  | "de" | "fr" | "ca" | "br" | "global" | "crypto";
+
 export class DataClient {
   private readonly http: HttpClient;
 
@@ -111,20 +115,61 @@ export class DataClient {
     }
   }
 
+  async getNews(params: {
+    market?: NewsMarket;
+    venue?: string;
+    symbol?: string;
+    asOf?: string;
+    since?: string;
+    kinds?: Array<"market_news" | "media" | "disclosure">;
+    language?: string;
+    limit?: number;
+  }): Promise<Record<string, unknown>> {
+    try {
+      return await this.http.get<Record<string, unknown>>("/news", {
+        ...(params.market ? { market: params.market } : {}),
+        ...(params.venue ? { venue: params.venue } : {}),
+        ...(params.symbol ? { symbol: params.symbol } : {}),
+        ...(params.asOf ? { as_of: params.asOf } : {}),
+        ...(params.since ? { since: params.since } : {}),
+        ...(params.kinds?.length ? { kinds: params.kinds.join(",") } : {}),
+        ...(params.language ? { language: params.language } : {}),
+        limit: String(params.limit ?? 10),
+      });
+    } catch (err) {
+      return {
+        market: params.market,
+        symbol: params.symbol,
+        items: [],
+        providers: [],
+        is_partial: true,
+        error: err instanceof HttpClientError ? `upstream ${err.status}: ${err.message}` : String(err),
+      };
+    }
+  }
+
   async getMarketNews(params: {
     market?: string;
     limit?: number;
   }): Promise<Record<string, unknown>> {
+    if ((params.market ?? "cn") !== "cn") {
+      return await this.getNews({
+        market: params.market as NewsMarket,
+        limit: params.limit ?? 20,
+        kinds: ["market_news", "media"],
+      });
+    }
     try {
       return await this.http.get<Record<string, unknown>>("/market/news", {
-        market: params.market ?? "cn",
+        market: "cn",
         limit: String(params.limit ?? 20),
       });
     } catch (err) {
-      if (err instanceof HttpClientError) {
-        return { market: params.market ?? "cn", items: [], error: `upstream ${err.status}: ${err.message}` };
-      }
-      return { market: params.market ?? "cn", items: [], error: String(err) };
+      return {
+        market: "cn",
+        items: [],
+        error: err instanceof HttpClientError ? `upstream ${err.status}: ${err.message}` : String(err),
+      };
     }
   }
 
