@@ -233,6 +233,7 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 | ✅ 已上线 | Scheduler / cron agent 模式 | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` 管理面 |
 | ✅ 已上线 | RiskGuard 账户级隔离 | D-9.1a | `RiskGuardFactory` 去除跨账户状态串联 |
 | ✅ 已上线 | 多市场数据源 — web 搜索 + 财报基本面 | D-10 | DDGS 零 key web search · `baostock` 是 A 股逻辑 venue：腾讯 HTTPS 行情/最新价 + Baostock 基本面/日历/成分；yfinance 覆盖全球（含港股）· analyst 接入 + 兜底 · lookbackDays 按市场分化 |
+| ✅ 已上线 | 统一多市场财经新闻 | D-12 | `GET /news` + `data.get_news` · 东财 / SEC / HKEX / Crypto feed · PIT `as_of` 过滤 · provider 故障可观察 · 股票市场级新闻明确标注指数/ETF 代理口径 |
 | ✅ 已上线 | 风控引擎 — 5 条规则全在 HTTP 路径激活 | D-9 收口 | `closed_trades` 由 HTTP 订单流写入；`RoutingCalendar` 覆盖美股 + crypto；trade-based 规则全在真实数据上触发 |
 | ✅ 已上线 | `askUserChoice` — `ask` 权限路径 | D-11（issue #2） | pending-permission 流程把 `ask` 状态从 workaround 救回（已收口） |
 | ✅ 已上线 | `permissions.yaml` 配置化 | D-11（issue #4） | `config/permissions.default.yaml` + `yaml_loader.ts` 替代 `defaults.ts` 硬编码 |

@@ -235,6 +235,7 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 | ✅ Shipped | Scheduler / cron agent mode | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` management plane |
 | ✅ Shipped | RiskGuard per-account isolation | D-9.1a | `RiskGuardFactory` removes cross-account state bleed |
 | ✅ Shipped | Multi-market data sources — web search + financial fundamentals | D-10 | zero-key DDGS web search · `baostock` is the logical A-share venue: Tencent HTTPS bars/ticker + Baostock fundamentals/calendar/constituents; yfinance covers global markets including HK · analyst integration + fallback · per-market lookbackDays |
+| ✅ Shipped | Unified multi-market financial news | D-12 | `GET /news` + `data.get_news` · Eastmoney / SEC / HKEX / Crypto feeds · PIT `as_of` filtering · observable provider failures · explicit index/ETF proxy labels for market-level stock news |
 | ✅ Shipped | Risk engine — all 5 rules live in HTTP path | D-9 closed | `closed_trades` writes from HTTP order flow; `RoutingCalendar` for US equity + crypto; all trade-based rules trigger on real data |
 | ✅ Shipped | `askUserChoice` — `ask` permission path | D-11 (issue #2) | pending-permission flow resolves the `ask` state (no longer a workaround) |
 | ✅ Shipped | `permissions.yaml` configuration | D-11 (issue #4) | `config/permissions.default.yaml` + `yaml_loader.ts` replace the hard-coded `defaults.ts` |
