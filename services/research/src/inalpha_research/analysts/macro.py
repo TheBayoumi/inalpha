@@ -216,10 +216,17 @@ class MacroAnalyst(Analyst):
         # D-9 L3：拉 SPY 当宏观 proxy（美国宏观环境主导全球风险偏好）。
         # 拉不到时返空 list，prompt 里清晰标注，LLM 走纯 calendar + 训练知识。
         # D-12：FRED 读数与新闻并发拉（互不依赖，各自独立降级）。
-        macro_news, readings = await asyncio.gather(
-            self._data.get_news(symbol="SPY", limit=8),
+        macro_news_result, readings = await asyncio.gather(
+            self._data.get_news(
+                market="us",
+                symbol="SPY",
+                as_of=as_of,
+                kinds=["media"],
+                limit=8,
+            ),
             _fetch_macro_readings(self._data, as_of=as_of),
         )
+        macro_news = macro_news_result.get("items", [])
         # 双档 cap（run() 里代码级 clamp）：有任一 live 数据 0.7，全无 0.5
         self._confidence_cap = 0.7 if (readings or macro_news) else 0.5
         return _format_user_prompt(

@@ -18,7 +18,7 @@ D-9 起：
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -98,9 +98,23 @@ class SentimentAnalyst(Analyst):
         lookback_days: int,
     ) -> str:
         market_type = infer_asset_type(venue=venue, symbol=symbol)
+        news_market = {
+            "crypto": "crypto",
+            "us_stock": "us",
+            "cn_stock": "cn",
+            "hk_stock": "hk",
+        }.get(market_type)
 
-        # crypto → 拉 FNG；非 crypto → 拉 yfinance news 喂 LLM
+        # crypto → FNG + 专业新闻；两类证据并列，不互相替代。
         if market_type == "crypto":
+            news_result = await self._data.get_news(
+                market="crypto",
+                as_of=as_of,
+                since=as_of - timedelta(days=lookback_days),
+                kinds=["media"],
+                limit=8,
+            )
+            crypto_news = news_result.get("items", [])
             try:
                 entries = await _fetch_fng(limit=_DEFAULT_LIMIT)
             except Exception as exc:
@@ -121,7 +135,7 @@ class SentimentAnalyst(Analyst):
                     as_of=as_of,
                     market_type=market_type,
                     fng_note="(Fear & Greed API unavailable — using web search)",
-                    news=[],
+                    news=crypto_news,
                     web_results=web_results,
                 )
             latest = entries[0]
@@ -134,22 +148,32 @@ class SentimentAnalyst(Analyst):
                 latest=latest,
                 recent_values=recent_values,
                 trend=trend,
+                news=crypto_news,
             )
 
-        # 非 crypto：拉 yfinance ticker news + web search，真新闻锚定 sentiment
-        # symbol 不一定能直接给 yfinance（akshare 的 sh.600519 等格式不通）；
-        # 这里直接用原 symbol 试一次；data-service 拉不到会返空 list，自然降级 LLM-only。
-        news = await self._data.get_news(symbol=symbol, limit=8)
+        # 非 crypto：结构化本地新闻 + 通用搜索兜底
+        news_result = await self._data.get_news(
+            market=news_market,
+            venue=venue,
+            symbol=symbol,
+            as_of=as_of,
+            since=as_of - timedelta(days=lookback_days),
+            limit=8,
+        )
+        news = news_result.get("items", [])
+        provider_status = news_result.get("providers", [])
         web_news = await self._data.get_web_search(
             f"{symbol} stock news sentiment analysis", max_results=5
         )
+        partial_note = " structured sources partial" if news_result.get("is_partial") else ""
         return _format_user_prompt_llm_only(
             symbol=symbol,
             as_of=as_of,
             market_type=market_type,
             fng_note=(
-                f"(non-crypto market — no Fear & Greed; {len(news)} news headlines, {len(web_news)} web results)"
-                if news or web_news
+                f"(non-crypto market — no Fear & Greed; {len(news)} structured headlines, "
+                f"{len(web_news)} web results; providers={provider_status}{partial_note})"
+                if news or web_news or provider_status
                 else "(non-crypto market — no Fear & Greed; all sources returned empty)"
             ),
             news=news,
@@ -195,7 +219,9 @@ def _format_user_prompt_with_fng(
     latest: dict[str, Any],
     recent_values: list[int],
     trend: dict[str, Any],
+    news: list[dict[str, Any]] | None = None,
 ) -> str:
+    news_block = _render_news_block(news or [])
     return (
         f"asset: {symbol}\n"
         f"market_type: {market_type}\n"
@@ -206,6 +232,7 @@ def _format_user_prompt_with_fng(
         f"  timestamp: {latest.get('timestamp')}\n"
         f"  trend_snapshot: {trend}\n"
         f"  recent_30d_values (newest first): {recent_values}\n\n"
+        f"{news_block}\n"
         f"Output the required JSON only."
     )
 

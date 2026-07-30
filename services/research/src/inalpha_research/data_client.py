@@ -153,30 +153,46 @@ class DataClient:
     async def get_news(
         self,
         *,
-        venue: str = "yfinance",
-        symbol: str,
+        venue: str | None = None,
+        market: str | None = None,
+        symbol: str | None = None,
+        as_of: datetime | None = None,
+        since: datetime | None = None,
+        kinds: list[str] | None = None,
         limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """``GET /news`` —— ticker-specific news 头条（按时间倒序）。
-
-        失败（venue 不支持 / 网络 / 测试 mock 未注册）时返**空 list**，不抛——
-        让 analyst 兜底走 LLM-only 而不是整条链路 500。
-        """
+    ) -> dict[str, Any]:
+        """``GET /news`` —— 保留条目与 provider 故障状态。"""
+        params: dict[str, Any] = {"limit": limit}
+        if venue:
+            params["venue"] = venue
+        if market:
+            params["market"] = market
+        if symbol:
+            params["symbol"] = symbol
+        if as_of:
+            params["as_of"] = as_of.isoformat()
+        if since:
+            params["since"] = since.isoformat()
+        if kinds:
+            params["kinds"] = kinds
         try:
-            r = await self._client.get(
-                "/news",
-                params={"venue": venue, "symbol": symbol, "limit": limit},
-            )
-        except Exception:
-            return []
+            r = await self._client.get("/news", params=params)
+        except Exception as exc:
+            return {"items": [], "providers": [], "is_partial": True, "error": str(exc)}
         if r.status_code >= 400:
-            return []
+            return {
+                "items": [],
+                "providers": [],
+                "is_partial": True,
+                "error": f"upstream {r.status_code}",
+            }
         try:
             payload = r.json()
         except Exception:
-            return []
-        items = payload.get("items") if isinstance(payload, dict) else None
-        return items if isinstance(items, list) else []
+            return {"items": [], "providers": [], "is_partial": True, "error": "invalid json"}
+        return payload if isinstance(payload, dict) else {
+            "items": [], "providers": [], "is_partial": True, "error": "invalid payload"
+        }
 
     async def get_fundamentals(
         self, venue: str, symbol: str, as_of: datetime | None = None
