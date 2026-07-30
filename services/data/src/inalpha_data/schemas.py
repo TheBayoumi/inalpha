@@ -82,44 +82,6 @@ class HealthResponse(BaseModel):
 # ────────────────────────────────────────────────────────────────────
 
 
-# ────────────────────────────────────────────────────────────────────
-# News（D-9 加：给 research macro/sentiment analyst 喂真新闻）
-# ────────────────────────────────────────────────────────────────────
-
-
-class NewsQuery(BaseModel):
-    """``GET /news`` 的 query 参数。"""
-
-    venue: str = Field(
-        default="yfinance",
-        description="新闻数据源 venue。支持 yfinance（全球零 key）和 baostock（A股）。",
-    )
-    symbol: str = Field(
-        ...,
-        examples=["AAPL", "^GSPC", "005930.KS", "sh.600519"],
-        description="ticker 标识：yfinance 用 Yahoo ticker，baostock 用 sh./sz. 前缀。",
-    )
-    limit: int = Field(default=10, ge=1, le=30, description="最多返回多少条")
-
-
-class NewsItem(BaseModel):
-    """单条新闻头条。"""
-
-    title: str
-    publisher: str = ""
-    link: str = ""
-    published_at: datetime | None = None
-    summary: str = ""
-
-
-class NewsResponse(BaseModel):
-    """``GET /news`` 响应：按发布时间倒序（最新在 items[0]）。"""
-
-    venue: str
-    symbol: str
-    items: list[NewsItem]
-
-
 class TickerQuery(BaseModel):
     """``GET /ticker`` 的 query 参数。"""
 

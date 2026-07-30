@@ -538,7 +538,9 @@ class BaostockConnector:
             raw = await asyncio.to_thread(_fetch_news_sync, symbol=code)
         except Exception as exc:
             _logger.warning("baostock_news_fetch_failed", symbol=symbol, error=str(exc))
-            return []
+            raise RuntimeError(
+                f"eastmoney news for {symbol} unavailable: {exc}"
+            ) from exc
 
         if not raw or not isinstance(raw, list):
             return []
@@ -561,10 +563,12 @@ class BaostockConnector:
                         published_at = dt_dt_dt.fromtimestamp(int(ts_raw), tz=UTC).isoformat()
                     else:
                         from datetime import datetime as dt_dt_dt
+                        from zoneinfo import ZoneInfo
 
                         published_at = (
                             dt_dt_dt.strptime(str(ts_raw)[:19], "%Y-%m-%d %H:%M:%S")
-                            .replace(tzinfo=UTC)
+                            .replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+                            .astimezone(UTC)
                             .isoformat()
                         )
                 except (ValueError, OSError):

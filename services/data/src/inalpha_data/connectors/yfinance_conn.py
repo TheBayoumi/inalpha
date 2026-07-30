@@ -343,9 +343,9 @@ def _fetch_news_sync(symbol: str, limit: int) -> list[dict[str, Any]]:
     ticker = yf.Ticker(symbol)
     try:
         raw_news = ticker.news or []
-    except Exception:
-        _logger.warning("yfinance_news_fetch_failed", symbol=symbol)
-        return []
+    except Exception as exc:
+        _logger.warning("yfinance_news_fetch_failed", symbol=symbol, error=str(exc))
+        raise RuntimeError(f"yfinance news for {symbol} unavailable: {exc}") from exc
 
     out: list[dict[str, Any]] = []
     for item in raw_news[:limit]:

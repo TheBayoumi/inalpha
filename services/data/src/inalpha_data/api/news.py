@@ -1,8 +1,4 @@
-"""``GET /news`` —— 拉新闻头条（D-9，零 key，给 research analyst 喂真数据用）。
-
-当前支持 venue=yfinance（全球）和 venue=baostock（A股）。
-"""
-
+"""``GET /news`` —— 统一多市场财经新闻与官方披露。"""
 from __future__ import annotations
 
 from typing import Annotated
@@ -11,12 +7,15 @@ from fastapi import APIRouter, Depends, Query
 from inalpha_shared.auth import User, get_current_user
 from inalpha_shared.errors import ValidationError
 
-from ..connectors import yfinance_conn
-from ..connectors._base import get_connector_for_venue
-from ..schemas import NewsItem, NewsQuery, NewsResponse
+from ..connectors.news import get_router
+from ..news_models import NewsQuery, NewsResponse
 from ..venues import canonicalize_market_identity
 
 router = APIRouter(tags=["news"])
+_SUPPORTED_MARKETS = {
+    "au", "br", "ca", "cn", "crypto", "de", "fr", "global", "hk", "in", "jp", "kr", "uk", "us"
+}
+_SUPPORTED_LEGACY_VENUES = {"yfinance", "baostock", "akshare"}
 
 
 @router.get("/news", response_model=NewsResponse)
@@ -24,32 +23,28 @@ async def get_news(
     _user: Annotated[User, Depends(get_current_user)],
     query: Annotated[NewsQuery, Query()],
 ) -> NewsResponse:
-    """拉指定 ticker 的最新新闻。
-
-    venue 支持 yfinance / baostock（其它返 422）；不支持 ticker 返空 list 而非错。
-    """
-    effective_venue, effective_symbol = canonicalize_market_identity(query.venue, query.symbol)
-    if effective_venue == "yfinance":
-        try:
-            conn = yfinance_conn.get_connector()
-            raw = await conn.fetch_news(effective_symbol, limit=query.limit)
-        except Exception:
-            raw = []
-    elif effective_venue == "baostock":
-        conn = get_connector_for_venue("baostock")
-        if not hasattr(conn, "fetch_news"):
-            raise ValidationError(
-                f"news fetch not available for venue {query.venue!r}",
-                code="NEWS_FETCH_NOT_SUPPORTED",
-                details={"venue": query.venue},
-            )
-        raw = await conn.fetch_news(effective_symbol, limit=query.limit)  # type: ignore[union-attr]
-    else:
+    """按市场和标的聚合新闻；旧 ``venue + symbol`` 请求保持兼容。"""
+    if query.market and query.market not in _SUPPORTED_MARKETS:
+        raise ValidationError(
+            f"news market {query.market!r} not supported",
+            code="NEWS_MARKET_NOT_SUPPORTED",
+            details={"market": query.market, "supported": sorted(_SUPPORTED_MARKETS)},
+        )
+    requested_venue = query.venue
+    requested_symbol = query.symbol
+    if not query.market and query.symbol and not query.venue:
+        query = query.model_copy(update={"venue": "yfinance"})
+        requested_venue = "yfinance"
+    if query.venue and query.symbol:
+        venue, symbol = canonicalize_market_identity(query.venue, query.symbol)
+        query = query.model_copy(update={"venue": venue, "symbol": symbol})
+    if not query.market and query.venue not in _SUPPORTED_LEGACY_VENUES:
         raise ValidationError(
             f"news venue {query.venue!r} not supported",
             code="NEWS_VENUE_NOT_SUPPORTED",
-            details={"venue": query.venue, "supported": ["yfinance", "baostock"]},
+            details={"venue": query.venue, "supported": sorted(_SUPPORTED_LEGACY_VENUES)},
         )
-
-    items = [NewsItem(**r) for r in raw]
-    return NewsResponse(venue=query.venue, symbol=query.symbol, items=items)
+    response = await get_router().fetch(query)
+    return response.model_copy(
+        update={"venue": requested_venue, "symbol": requested_symbol}
+    )
