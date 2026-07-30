@@ -397,10 +397,53 @@ export const dataSearchSymbolTool = createTool({
   },
 });
 
+// ────────────────────────────────────────────────────────────────────
+// data.get_news
+// ────────────────────────────────────────────────────────────────────
+
+export const dataGetNewsTool = createTool({
+  id: "data.get_news",
+  description: `
+    统一财经新闻与官方披露。按 market 路由：A股东财、美股 SEC+Yahoo、港股
+    HKEX+Yahoo、Crypto 专业媒体/官方 feed；返回逐来源 status、内容时点和部分失败标志。
+
+    何时用：单标的新闻、公司公告、市场消息面，以及需要 asOf 截止时间的研究证据。
+    何时不用：价格/K线用 data.get_bars；要读全文时对返回 URL 再用 web.fetch。
+    坑：disclosure 不等于媒体新闻；is_partial=true 表示至少一个专业源故障，不能把
+    空结果解释成“没有消息”。历史查询会排除无可靠发布时间和晚于 asOf 的条目。
+  `.trim(),
+  inputSchema: z.object({
+    market: z.enum([
+      "cn", "us", "hk", "jp", "kr", "au", "in", "uk",
+      "de", "fr", "ca", "br", "global", "crypto",
+    ]),
+    symbol: SymbolSchema.optional(),
+    asOf: z.string().datetime({ offset: true }).optional(),
+    since: z.string().datetime({ offset: true }).optional(),
+    kinds: z.array(z.enum(["market_news", "media", "disclosure"])).optional(),
+    language: z.string().min(1).max(35).optional(),
+    limit: z.number().int().min(1).max(50).default(10),
+  }),
+  execute: async (inputData, ctx) => {
+    const tc = ctx?.requestContext as ToolRequestContext | undefined;
+    const client = await getClient(tc);
+    return await client.getNews({
+      market: inputData.market,
+      symbol: inputData.symbol,
+      asOf: inputData.asOf,
+      since: inputData.since,
+      kinds: inputData.kinds,
+      language: inputData.language,
+      limit: inputData.limit ?? 10,
+    });
+  },
+});
+
 export const dataTools = [
   dataGetBarsTool,
   dataBackfillBarsTool,
   dataGetTickerTool,
   dataGetFundamentalsTool,
   dataSearchSymbolTool,
+  dataGetNewsTool,
 ] as const;

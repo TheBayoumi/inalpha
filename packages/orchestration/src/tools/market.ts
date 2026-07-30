@@ -2,8 +2,8 @@
  * 市场级行情归因 tool（D-12+）—— services/data 的 /market/* 端点包装。
  *
  * 行情归因（"今天为什么涨/跌"）的四个数据维度，全部无需 symbol。
- * venue 按 market 参数路由：当前实装 cn（A股，直连东财/同花顺，配方源自
- * a-stock-data）；未实装的市场后端返 400，不要硬调。
+ * venue 按 market 参数路由：新闻支持全部已声明市场；板块、资金与强势股当前仅支持
+ * cn（A股，直连东财/同花顺，配方源自 a-stock-data）。
  *
  * Tool 设计遵循 docs/05-tool-skill-discipline.md：description 四要素。
  */
@@ -22,8 +22,14 @@ async function getClient(ctx?: ToolRequestContext): Promise<DataClient> {
   return new DataClient({ baseUrl: settings.dataServiceUrl, token });
 }
 
-const MarketSchema = z.enum(["cn"]).default("cn")
-  .describe("市场；当前仅实装 cn（A股），其它市场归因用 web.search_news + 指数 get_bars 替代");
+const NewsMarketSchema = z.enum([
+  "cn", "us", "hk", "jp", "kr", "au", "in", "uk",
+  "de", "fr", "ca", "br", "global", "crypto",
+]).default("cn")
+  .describe("市场；A股走东财，Crypto 走财经 feed，其余股票市场走明确标注的代表指数/ETF 新闻代理");
+
+const CnMarketSchema = z.enum(["cn"]).default("cn")
+  .describe("市场；当前仅支持 cn（A股）");
 
 // ────────────────────────────────────────────────────────────────────
 // data.get_market_news
@@ -32,8 +38,9 @@ const MarketSchema = z.enum(["cn"]).default("cn")
 export const dataGetMarketNewsTool = createTool({
   id: "data.get_market_news",
   description: `
-    全市场财经快讯流（A股=东财 7×24 全球资讯），**无需 symbol**。返回标题 / 摘要 /
-    UTC 时间戳 / 关联代码。
+    多市场财经快讯流，**无需 symbol**。A股走东财，Crypto 走专业财经 feed；其他
+    股票市场走代表性指数/ETF 的 Yahoo 新闻代理，条目会保留代理 ticker 与口径声明。
+    响应含逐 provider status、UTC 时间戳与部分失败标志。
 
     何时用：
     - 行情归因："某市场 / 大盘今天为什么涨跌、有什么消息"——**优先于 web.search_news**
@@ -47,11 +54,12 @@ export const dataGetMarketNewsTool = createTool({
     坑：
     - published_at 已转 UTC；引用时按 §3.1 标注数据时点
     - 60s 进程内缓存；快讯≠结论，结论级引用先 web.fetch 读原文
-    - 源站故障返回 error 字段（502 MARKET_DATA_UNAVAILABLE）——此时降级
-      web.search 并显式说明快讯源不可用
+    - A股源站故障返回 error 字段（502 MARKET_DATA_UNAVAILABLE）；其它市场通过
+      providers[].status / is_partial 表示部分或全部来源故障。此时降级 web.search_news
+      并显式说明结构化快讯源不可用
   `.trim(),
   inputSchema: z.object({
-    market: MarketSchema,
+    market: NewsMarketSchema,
     limit: z.number().int().min(1).max(50).default(20),
   }),
   execute: async (inputData, ctx) => {
@@ -88,7 +96,7 @@ export const dataGetMarketSectorsTool = createTool({
     - 60s 缓存；不要循环逐板块调用
   `.trim(),
   inputSchema: z.object({
-    market: MarketSchema,
+    market: CnMarketSchema,
     topN: z.number().int().min(1).max(50).default(10),
   }),
   execute: async (inputData, ctx) => {
@@ -125,7 +133,7 @@ export const dataGetMarketMoneyflowTool = createTool({
     - as_of_time 是北京时间 HH:MM；非交易时段拿的是上一交易日尾盘值
   `.trim(),
   inputSchema: z.object({
-    market: MarketSchema,
+    market: CnMarketSchema,
   }),
   execute: async (inputData, ctx) => {
     const tc = ctx?.requestContext as ToolRequestContext | undefined;
@@ -158,7 +166,7 @@ export const dataGetMarketMoversTool = createTool({
     - 含 ST / 涨停板个股，标签可能滞后；60s 缓存
   `.trim(),
   inputSchema: z.object({
-    market: MarketSchema,
+    market: CnMarketSchema,
     limit: z.number().int().min(1).max(50).default(30),
   }),
   execute: async (inputData, ctx) => {

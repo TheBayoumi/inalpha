@@ -12,6 +12,7 @@ import {
   dataBackfillBarsTool,
   dataGetBarsTool,
   dataGetFundamentalsTool,
+  dataGetNewsTool,
   dataGetTickerTool,
   dataSearchSymbolTool,
   dataTools,
@@ -115,6 +116,7 @@ export {
   dataGetMarketMoversTool,
   dataGetMarketNewsTool,
   dataGetMarketSectorsTool,
+  dataGetNewsTool,
   dataGetTickerTool,
   dataSearchSymbolTool,
   divinationCastHexagramTool,
@@ -244,6 +246,7 @@ export const orchestratorToolList = [
   dataBackfillBarsTool,
   dataGetTickerTool,
   dataGetFundamentalsTool,
+  dataGetNewsTool,
   // 公司名 → ticker 解析（候选池构建，禁训练记忆猜代码）
   dataSearchSymbolTool,
   // D-10：web 搜索；web.fetch 读原文补证据链最后一公里
