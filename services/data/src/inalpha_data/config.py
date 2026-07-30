@@ -75,6 +75,17 @@ class DataSettings(BaseSettings):
     """进程内缓存 TTL（秒）。快讯/板块榜分钟级更新，60s 挡住 analyst fan-out
     同一轮重复打源站；响应带 fetched_at，fresh 语义不破。"""
 
+    news_timeout_s: float = Field(default=15.0, alias="NEWS_TIMEOUT_S")
+    """SEC、HKEX 与 RSS provider 的单请求超时。"""
+
+    sec_user_agent: str = Field(
+        default="Inalpha/0.2 contact@inalpha.dev", alias="SEC_USER_AGENT"
+    )
+    """SEC 要求可识别应用和联系方式；生产可覆盖为维护者邮箱。"""
+
+    sec_min_interval_s: float = Field(default=0.11, alias="SEC_MIN_INTERVAL_S")
+    """SEC host 请求最小间隔；默认略低于每秒 10 次上限。"""
+
     constituent_snapshot_indices: str = Field(default="", alias="CONSTITUENT_SNAPSHOT_INDICES")
     """每日成分快照追踪的指数代码，逗号分隔（如 ``000300,000905``）。空=禁用调度
     （ADR-0053 阶段 C 向前累积:免费源只回当前成分，唯一 PIT 路径是从启用日起每日落库）。

@@ -25,6 +25,8 @@ from inalpha_shared.auth import User, get_current_user
 from inalpha_shared.errors import InalphaError, ValidationError
 
 from ..connectors.cn_market import CnMarketConnector, CnMarketError, get_connector
+from ..connectors.news import get_router
+from ..news_models import NewsQuery, NewsResponse
 from ..schemas import (
     MarketNewsItem,
     MarketNewsResponse,
@@ -37,7 +39,10 @@ from ..schemas import (
 _logger = get_logger(__name__)
 router = APIRouter(tags=["market"])
 
-_SUPPORTED_MARKETS = ("cn",)
+_SUPPORTED_MARKETS = (
+    "cn", "us", "hk", "jp", "kr", "au", "in", "uk", "de", "fr", "ca", "br", "global", "crypto"
+)
+_CN_ONLY_MARKETS = ("cn",)
 
 
 class MarketDataUnavailableError(InalphaError):
@@ -52,17 +57,29 @@ def _resolve(market: str) -> CnMarketConnector:
     raise ValidationError(
         f"market {market!r} not supported",
         code="MARKET_NOT_SUPPORTED",
-        details={"market": market, "supported": list(_SUPPORTED_MARKETS)},
+        details={"market": market, "supported": list(_CN_ONLY_MARKETS)},
     )
 
 
-@router.get("/market/news", response_model=MarketNewsResponse)
+@router.get("/market/news", response_model=NewsResponse | MarketNewsResponse)
 async def market_news(
     _user: Annotated[User, Depends(get_current_user)],
-    market: Annotated[str, Query(description="市场，当前支持 cn")] = "cn",
+    market: Annotated[
+        str, Query(description="市场代码；新闻支持全部已声明市场")
+    ] = "cn",
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
-) -> MarketNewsResponse:
-    """全市场财经快讯（东财 7×24），无需 symbol。"""
+) -> NewsResponse | MarketNewsResponse:
+    """全市场财经快讯；非 A 股转调统一新闻路由。"""
+    if market not in _SUPPORTED_MARKETS:
+        raise ValidationError(
+            f"market {market!r} not supported",
+            code="MARKET_NOT_SUPPORTED",
+            details={"market": market, "supported": list(_SUPPORTED_MARKETS)},
+        )
+    if market != "cn":
+        return await get_router().fetch(
+            NewsQuery(market=market, limit=limit, kinds=["market_news", "media"])
+        )
     conn = _resolve(market)
     try:
         items = await conn.fetch_market_news(limit=limit)

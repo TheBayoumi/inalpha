@@ -39,10 +39,15 @@ from .connectors import baostock as baostock_conn
 from .connectors import binance as binance_conn
 from .connectors import cn_market as cn_market_conn
 from .connectors import fred as fred_conn
+from .connectors import news as news_conn
 from .connectors import symbol_search as symbol_search_conn
 from .connectors import web_fetch as web_fetch_conn
 from .connectors import web_search as web_search_conn
 from .connectors import yfinance_conn
+from .connectors.news.feed_models import DEFAULT_CRYPTO_FEEDS
+from .connectors.news.hkex import HkexNewsProvider
+from .connectors.news.rss import RssFeedProvider
+from .connectors.news.sec import SecNewsProvider
 from .scheduler import ConstituentSnapshotScheduler, parse_indices
 
 _settings = get_data_settings()
@@ -70,6 +75,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     fred_conn.init_connector(api_key=_settings.fred_api_key)
     web_search_conn.init_connector()
     cn_market_conn.init_connector()
+    news_conn.init_router(
+        [
+            SecNewsProvider(
+                user_agent=_settings.sec_user_agent,
+                timeout_s=_settings.news_timeout_s,
+                min_interval_s=_settings.sec_min_interval_s,
+            ),
+            HkexNewsProvider(timeout_s=_settings.news_timeout_s),
+            *[
+                RssFeedProvider(feed, timeout_s=_settings.news_timeout_s)
+                for feed in DEFAULT_CRYPTO_FEEDS
+            ],
+        ]
+    )
     web_fetch_conn.init_connector()
     symbol_search_conn.init_connector()
     # 成分快照每日调度（ADR-0053 阶段 C 向前累积）——无追踪指数则自动禁用
@@ -83,6 +102,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     finally:
         await snapshot_scheduler.stop()
         await symbol_search_conn.close_connector()
+        await news_conn.close_router()
         await web_fetch_conn.close_connector()
         await fred_conn.close_connector()
         await yfinance_conn.close_connector()

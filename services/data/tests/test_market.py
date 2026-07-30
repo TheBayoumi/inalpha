@@ -31,15 +31,119 @@ def test_market_sectors_requires_auth(client: TestClient) -> None:
     assert r.status_code == 401
 
 
-def test_market_unsupported_market_rejected(
+def test_market_us_news_uses_market_proxy(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    """未实装的 market 返 400 MARKET_NOT_SUPPORTED（不要硬调后静默空）。"""
-    r = client.get("/market/news", headers=auth_headers, params={"market": "us"})
-    assert r.status_code == 400
+    """无 symbol 美股快讯应通过 SPY 市场代理，而不是 ticker provider unsupported。"""
+    from inalpha_data.connectors import yfinance_conn as yf
+
+    original = yf._connector.fetch_news
+    seen: list[str] = []
+
+    async def mock_news(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        seen.append(symbol)
+        return [{
+            "title": "US market update",
+            "publisher": "Reuters",
+            "link": "https://example.com/us",
+            "published_at": "2026-07-29T05:00:00Z",
+            "summary": "Stocks moved after macro news.",
+        }]
+
+    yf._connector.fetch_news = mock_news
+    try:
+        r = client.get("/market/news", headers=auth_headers, params={"market": "us"})
+    finally:
+        yf._connector.fetch_news = original
+    assert r.status_code == 200
     body = r.json()
-    assert body["code"] == "MARKET_NOT_SUPPORTED"
-    assert body["details"]["supported"] == ["cn"]
+    assert seen == ["SPY"]
+    assert body["providers"][0]["provider"] == "yfinance_market_proxy"
+    assert body["providers"][0]["status"] == "ok"
+    assert body["items"][0]["kind"] == "market_news"
+    assert body["items"][0]["symbols"] == ["SPY"]
+    assert "not a complete market newswire" in body["items"][0]["summary"]
+
+
+
+def test_market_hk_news_uses_hsi_proxy(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """无 symbol 港股快讯使用恒指代理，并保留代理 ticker。"""
+    from inalpha_data.connectors import yfinance_conn as yf
+
+    original = yf._connector.fetch_news
+    seen: list[str] = []
+
+    async def mock_news(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        seen.append(symbol)
+        return [{"title": "HK market", "published_at": "2026-07-29T05:00:00Z"}]
+
+    yf._connector.fetch_news = mock_news
+    try:
+        r = client.get("/market/news", headers=auth_headers, params={"market": "hk"})
+    finally:
+        yf._connector.fetch_news = original
+    assert r.status_code == 200
+    assert seen == ["^HSI"]
+    assert r.json()["items"][0]["symbols"] == ["^HSI"]
+
+
+
+@pytest.mark.parametrize(
+    ("market", "ticker"),
+    [
+        ("jp", "^N225"), ("kr", "^KS11"), ("au", "^AXJO"), ("in", "^NSEI"),
+        ("uk", "^FTSE"), ("de", "^GDAXI"), ("fr", "^FCHI"),
+        ("ca", "^GSPTSE"), ("br", "^BVSP"), ("global", "ACWI"),
+    ],
+)
+def test_global_market_news_proxy_routes_expected_ticker(
+    client: TestClient, auth_headers: dict[str, str], market: str, ticker: str
+) -> None:
+    """已声明的全球股票市场都应映射到可审计的代表性载体。"""
+    from inalpha_data.connectors import yfinance_conn as yf
+
+    original = yf._connector.fetch_news
+    seen: list[str] = []
+
+    async def mock_news(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        seen.append(symbol)
+        return [{"title": f"{market} market", "published_at": "2026-07-29T05:00:00Z"}]
+
+    yf._connector.fetch_news = mock_news
+    try:
+        r = client.get("/market/news", headers=auth_headers, params={"market": market})
+    finally:
+        yf._connector.fetch_news = original
+    assert r.status_code == 200
+    assert seen == [ticker]
+    assert r.json()["items"][0]["symbols"] == [ticker]
+
+
+
+def test_market_proxy_preserves_yahoo_failure(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Yahoo 故障不能被包装成 no_results 或假成功。"""
+    from inalpha_data.connectors import yfinance_conn as yf
+
+    original = yf._connector.fetch_news
+
+    async def failed_news(symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        raise RuntimeError("Yahoo rate limited")
+
+    yf._connector.fetch_news = failed_news
+    try:
+        r = client.get("/market/news", headers=auth_headers, params={"market": "us"})
+    finally:
+        yf._connector.fetch_news = original
+    assert r.status_code == 200
+    body = r.json()
+    assert body["items"] == []
+    assert body["is_partial"] is True
+    assert body["providers"][0]["status"] == "upstream_error"
+    assert "rate limited" in body["providers"][0]["error"]
 
 
 def test_market_news_mock_returns_items(

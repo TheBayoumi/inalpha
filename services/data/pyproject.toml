@@ -28,6 +28,8 @@ dependencies = [
     # FRED 全球宏观（圣路易斯联储），免费 key 注册；80 万+ 经济序列
     "fredapi>=0.5.2",
     "trafilatura>=2.1.0",
+    # RSS/Atom 仅做 bytes 解析；HTTP、超时和条件请求由 async httpx 管理
+    "feedparser>=6.0.12",
 ]
 
 [dependency-groups]
