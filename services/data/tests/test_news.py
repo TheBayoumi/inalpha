@@ -200,8 +200,20 @@ def test_market_only_news_does_not_claim_yfinance_venue(
     assert r.json()["venue"] is None
 
 
-def test_crypto_symbol_news_reports_feed_unsupported() -> None:
-    """市场级 RSS 不得冒充单标的新闻流。"""
+def test_crypto_symbol_news_reports_scope_not_supported(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """市场级 RSS 不得把单标的无覆盖伪装成没有新闻。"""
+    r = client.get(
+        "/news",
+        headers=auth_headers,
+        params={"market": "crypto", "symbol": "BTC/USDT", "limit": 5},
+    )
+    assert r.status_code == 422
+    assert r.json()["code"] == "NEWS_SCOPE_NOT_SUPPORTED"
+
+
+def test_crypto_symbol_provider_reports_unsupported() -> None:
     from inalpha_data.connectors.news.feed_models import DEFAULT_CRYPTO_FEEDS
     from inalpha_data.connectors.news.rss import RssFeedProvider
     from inalpha_data.news_models import NewsQuery
@@ -219,6 +231,20 @@ def test_crypto_symbol_news_reports_feed_unsupported() -> None:
     result = asyncio.run(run())
     assert result.items == []
     assert result.status == "unsupported"
+
+
+def test_news_rejects_uncovered_kind_and_language(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """类型或语言没有 provider 覆盖时必须显式返回 422。"""
+    cases = (
+        {"market": "jp", "symbol": "6758.T", "kinds": "disclosure"},
+        {"market": "us", "symbol": "AAPL", "kinds": "media", "language": "fr"},
+    )
+    for params in cases:
+        r = client.get("/news", headers=auth_headers, params=params)
+        assert r.status_code == 422
+        assert r.json()["code"] == "NEWS_SCOPE_NOT_SUPPORTED"
 
 
 def test_global_stock_news_uses_symbol_not_market_proxy(

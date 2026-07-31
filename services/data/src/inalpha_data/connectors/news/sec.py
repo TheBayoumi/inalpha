@@ -32,6 +32,15 @@ class SecNewsProvider:
         self._last_request_at = 0.0
         self._ticker_map: dict[str, str] | None = None
 
+    def supports(self, query: NewsQuery) -> bool:
+        """SEC 只覆盖美国单标的英文官方披露。"""
+        return bool(
+            query.market == "us"
+            and query.symbol
+            and (not query.kinds or "disclosure" in query.kinds)
+            and (not query.language or query.language == "en")
+        )
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         """返回 ticker 截至查询时点的近期 SEC filings。"""
         fetched_at = datetime.now(UTC)

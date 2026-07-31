@@ -40,7 +40,7 @@ class NewsRouter:
         )
 
     def _select(self, query: NewsQuery) -> list[NewsProvider]:
-        """按市场选择来源；未知市场仍允许 Yahoo ticker 兜底。"""
+        """按市场初选来源，再按 provider capability 排除无覆盖组合。"""
         names: set[str]
         if query.market == "cn" or query.venue in {"baostock", "akshare"}:
             names = {"eastmoney"}
@@ -62,8 +62,16 @@ class NewsRouter:
         return [
             provider
             for provider in self._providers
-            if provider.name in names or ("rss" in names and provider.name.startswith("rss:"))
+            if (
+                provider.name in names
+                or ("rss" in names and provider.name.startswith("rss:"))
+            )
+            and provider.supports(query)
         ]
+
+    def has_coverage(self, query: NewsQuery) -> bool:
+        """是否至少有一个 provider 覆盖当前查询。"""
+        return bool(self._select(query))
 
     async def close(self) -> None:
         """关闭自有 provider 资源。"""

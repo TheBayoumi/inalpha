@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from inalpha_shared.auth import User, get_current_user
-from inalpha_shared.errors import ValidationError
+from inalpha_shared.errors import InalphaError, ValidationError
 
 from ..connectors.news import get_router
 from ..news_models import NewsQuery, NewsResponse
@@ -16,6 +16,13 @@ _SUPPORTED_MARKETS = {
     "au", "br", "ca", "cn", "crypto", "de", "fr", "global", "hk", "in", "jp", "kr", "uk", "us"
 }
 _SUPPORTED_LEGACY_VENUES = {"yfinance", "baostock", "akshare"}
+
+
+class NewsScopeNotSupportedError(InalphaError):
+    """查询有效，但没有 provider 覆盖该 scope。"""
+
+    code = "NEWS_SCOPE_NOT_SUPPORTED"
+    status_code = 422
 
 
 @router.get("/news", response_model=NewsResponse)
@@ -44,7 +51,19 @@ async def get_news(
             code="NEWS_VENUE_NOT_SUPPORTED",
             details={"venue": query.venue, "supported": sorted(_SUPPORTED_LEGACY_VENUES)},
         )
-    response = await get_router().fetch(query)
+    news_router = get_router()
+    if not news_router.has_coverage(query):
+        raise NewsScopeNotSupportedError(
+            "no news provider covers the requested scope",
+            details={
+                "market": query.market,
+                "venue": query.venue,
+                "symbol": query.symbol,
+                "kinds": query.kinds,
+                "language": query.language,
+            },
+        )
+    response = await news_router.fetch(query)
     return response.model_copy(
         update={"venue": requested_venue, "symbol": requested_symbol}
     )
