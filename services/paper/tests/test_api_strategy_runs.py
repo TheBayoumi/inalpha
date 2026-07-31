@@ -336,22 +336,42 @@ async def test_list_decisions_and_ownership(client: TestClient, app_with_lifespa
         json={"candidate_id": str(cid), "venue": "binance", "symbol": "BTC/USDT", "timeframe": "1h"},
     ).json()
 
-    # 直接落一行决策（绕过 runner）
+    # 直接落库并固定 created_at，验证 API 返回最新决策且 limit 截取最新窗口。
+    decision_times = (
+        ("ord-old", datetime(2026, 6, 2, 10, tzinfo=UTC)),
+        ("ord-mid", datetime(2026, 6, 2, 11, tzinfo=UTC)),
+        ("ord-new", datetime(2026, 6, 2, 12, tzinfo=UTC)),
+    )
     async with get_conn() as conn:
-        await runs_store.insert_decision(
-            conn, run_id=UUID(run["id"]), bar_ts=datetime(2026, 6, 2, tzinfo=UTC),
-            bar_close=Decimal("50000"), side="BUY", quantity=Decimal("0.01"),
-            order_type="MARKET", outcome="filled", fill_price=Decimal("50000"),
-            fee=Decimal("0.5"), order_id="ord-x",
-        )
+        for order_id, created_at in decision_times:
+            await runs_store.insert_decision(
+                conn, run_id=UUID(run["id"]), bar_ts=created_at,
+                bar_close=Decimal("50000"), side="BUY", quantity=Decimal("0.01"),
+                order_type="MARKET", outcome="filled", fill_price=Decimal("50000"),
+                fee=Decimal("0.5"), order_id=order_id,
+            )
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE strategy_run_decisions
+                    SET created_at = %s
+                    WHERE run_id = %s AND order_id = %s
+                    """,
+                    (created_at, run["id"], order_id),
+                )
 
     r = client.get(f"/strategy_runs/{run['id']}/decisions", headers=headers)
     assert r.status_code == 200, r.json()
     body = r.json()
-    assert len(body) == 1
+    assert [decision["order_id"] for decision in body] == ["ord-new", "ord-mid", "ord-old"]
     assert body[0]["outcome"] == "filled"
     assert body[0]["side"] == "BUY"
-    assert body[0]["order_id"] == "ord-x"
+
+    latest = client.get(
+        f"/strategy_runs/{run['id']}/decisions?limit=2", headers=headers
+    )
+    assert latest.status_code == 200, latest.json()
+    assert [decision["order_id"] for decision in latest.json()] == ["ord-new", "ord-mid"]
 
     # 别的账户拉别人的 decisions → 404
     r2 = client.get(f"/strategy_runs/{run['id']}/decisions", headers=_headers(client))
