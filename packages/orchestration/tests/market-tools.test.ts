@@ -89,6 +89,18 @@ describe("data.get_news", () => {
       ),
     ).rejects.toMatchObject({ code: "NEWS_SCOPE_NOT_SUPPORTED", status: 422 });
   });
+
+  it("propagates request-layer rate limits instead of reporting provider partial failure", async () => {
+    mockFetch(async () =>
+      new Response(
+        JSON.stringify({ code: "RATE_LIMITED", message: "slow down" }),
+        { status: 429, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      dataGetNewsTool.execute!({ market: "us", symbol: "AAPL" }, ctx()),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED", status: 429 });
+  });
 });
 
 describe("data.get_market_news", () => {

@@ -179,7 +179,13 @@ class DataClient:
             r = await self._client.get("/news", params=params)
         except Exception as exc:
             return {"items": [], "providers": [], "is_partial": True, "error": str(exc)}
-        if r.status_code >= 400:
+        if 400 <= r.status_code < 500:
+            raise DataServiceError(
+                f"news request rejected with upstream {r.status_code}",
+                status_code=r.status_code,
+                details={"upstream_status": r.status_code},
+            )
+        if r.status_code >= 500:
             return {
                 "items": [],
                 "providers": [],
