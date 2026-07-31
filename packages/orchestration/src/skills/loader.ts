@@ -153,7 +153,8 @@ export function buildSkillsPromptSection(skillsDir?: string): string {
     `- 用户意图命中某条 description → 先 skill.read 读其 SKILL.md，再按指引逐步执行；` +
     `references/ 下的文档按当前步骤需要再读，不要一次全读\n` +
     `- skill 是静态方法论不含任何数据：其中所有"查热点/行情/财报/新闻"步骤一律映射到 ` +
-    `web.search / web.search_news / data.get_bars(fresh=true) / data.get_ticker / ` +
+    `web.search / data.get_news（单标的与披露）/ data.get_market_news（市场级）/ ` +
+    `web.search_news（前两者无覆盖或故障时降级）/ data.get_bars(fresh=true) / data.get_ticker / ` +
     `data.get_fundamentals / factor.* / research.deep_dive，禁止用训练记忆代答\n` +
     `- 按 skill 产出结论时保持用户语言，并标注数据截止时间\n` +
     `</skills>\n\n`

@@ -407,7 +407,8 @@ export const dataGetNewsTool = createTool({
     统一财经新闻与官方披露。按 market 路由：A股东财、美股 SEC+Yahoo、港股
     HKEX+Yahoo、Crypto 专业媒体/官方 feed；返回逐来源 status、内容时点和部分失败标志。
 
-    何时用：单标的新闻、公司公告、市场消息面，以及需要 asOf 截止时间的研究证据。
+    何时用：股票单标的新闻、公司公告、市场消息面，以及需要 asOf 截止时间的研究证据。
+    Crypto feed 只覆盖无 symbol 的市场级消息；单币种新闻改用 web.search_news。
     何时不用：价格/K线用 data.get_bars；要读全文时对返回 URL 再用 web.fetch。
     坑：disclosure 不等于媒体新闻；is_partial=true 表示至少一个专业源故障，不能把
     空结果解释成“没有消息”。asOf/since 只对当前 provider 快照做截止过滤，不是历史
@@ -425,6 +426,21 @@ export const dataGetNewsTool = createTool({
     kinds: z.array(z.enum(["market_news", "media", "disclosure"])).optional(),
     language: z.string().min(1).max(35).optional(),
     limit: z.number().int().min(1).max(50).default(10),
+  }).superRefine((input, context) => {
+    if (input.market === "crypto" && input.symbol) {
+      context.addIssue({
+        code: "custom",
+        path: ["symbol"],
+        message: "Crypto feeds are market-level only; omit symbol or use web.search_news",
+      });
+    }
+    if (input.asOf && input.since && Date.parse(input.since) > Date.parse(input.asOf)) {
+      context.addIssue({
+        code: "custom",
+        path: ["since"],
+        message: "since must not be later than asOf",
+      });
+    }
   }),
   execute: async (inputData, ctx) => {
     const tc = ctx?.requestContext as ToolRequestContext | undefined;
