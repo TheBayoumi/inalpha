@@ -43,4 +43,5 @@ def render_untrusted_evidence(
 def _clean_text(value: object, max_length: int) -> str:
     """移除控制字符并截断外部文本。"""
     text = _CONTROL_CHARS.sub(" ", str(value or ""))
+    text = text.replace("<", "\\u003c").replace(">", "\\u003e")
     return " ".join(text.split())[:max_length]

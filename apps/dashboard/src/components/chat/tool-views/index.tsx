@@ -110,6 +110,7 @@ export function resolveToolView(toolName: string, v: unknown): ReactNode | null 
     case "factor_evaluate_candidate":
     case "factor_custom_score":
       return isCustomFactor(v) ? <CustomFactorView c={v} /> : null;
+    case "data_get_news":
     case "data_get_market_news":
       return isMarketNews(v) ? <MarketNewsView v={v} /> : null;
     case "data_get_market_sectors":

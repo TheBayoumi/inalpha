@@ -20,13 +20,15 @@ metadata:
 **训练记忆里的"最新财报"几乎必然过时。**开始前四步强制：
 
 1. 确认 as_of（runtime_facts 里的真实今天）
-2. `web.search_news` / `web.search` 搜该公司**最新**财报发布——禁止直接用记忆里的季度数据
+2. 先用 `data.search_symbol` 解析标的，再用 `data.get_news` 查最新官方披露；无覆盖或
+   provider 故障时才降级 `web.search_news` / `web.search`——禁止直接用记忆里的季度数据
 3. 核对发布日期距 as_of 是否在 3 个月内；不在就换关键词再搜，或明确告诉用户"目标季度尚未发布/已过时"
 4. 关键来源（财报原文 / 业绩说明会记录 / 公司公告页）用 `web.fetch` 读正文，记录 published_at
 
 | 步骤 | 工具 |
 |---|---|
-| 找最新财报发布 / 业绩会 / 共识预期报道 | `web.search_news`、`web.search` |
+| 找最新官方财报披露 | `data.get_news`（disclosure；检查 provider / coverage） |
+| 找业绩会 / 共识预期报道，或结构化源降级 | `web.search_news`、`web.search` |
 | 读财报原文 / transcript / 公告正文 | `web.fetch` |
 | 公司名 → 代码 | `data.search_symbol` |
 | 核验财务指标（毛利 / 现金流 / 周转） | `data.get_fundamentals` |

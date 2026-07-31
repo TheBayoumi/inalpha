@@ -22,6 +22,8 @@ class NewsRouter:
         fetched_at = datetime.now(UTC)
         selected = self._select(query)
         results = await asyncio.gather(*(provider.fetch(query) for provider in selected))
+        for provider, result in zip(selected, results, strict=True):
+            result.coverage = provider.coverage
         items = filter_and_dedupe(
             [item for result in results for item in result.items], query
         )

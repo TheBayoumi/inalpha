@@ -137,7 +137,7 @@ export class DataClient {
         limit: String(params.limit ?? 10),
       });
     } catch (err) {
-      if (err instanceof HttpClientError && err.status < 500 && err.status !== 429) {
+      if (err instanceof HttpClientError && err.status < 500) {
         throw err;
       }
       return {

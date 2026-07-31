@@ -29,7 +29,8 @@ fail 就 stop，不跨层补救**。同一结论要多源交叉验证，不信�
 | 行业板块涨跌幅榜（顺风 / 逆风） | `data.get_market_sectors` |
 | 当日强势股 + 题材标签（主线确认） | `data.get_market_movers` |
 | 沪深港通资金流向（市场级资金面） | `data.get_market_moneyflow` |
-| 个股新闻 / 公告 / 研报线索 | `web.search_news`、`web.search` |
+| 个股新闻 / 官方公告 | `data.get_news`（先看 provider / coverage；返回 URL 再 `web.fetch`） |
+| 研报线索或 `data.get_news` 无覆盖 / 故障降级 | `web.search_news`、`web.search` |
 | **核一手来源原文**（公告 / 研报 / 新闻正文 + 日期） | `web.fetch` |
 | 临时计算（PEG / 消化年限等公式） | `sandbox.run_code`（或心算后写明算式） |
 | 深度多视角研究（决定要不要建仓级别） | `research.deep_dive`（本 skill 之后的下一步） |
