@@ -48,7 +48,9 @@ export const dataGetMarketNewsTool = createTool({
     - 盘面突发：用户问"刚刚发生了什么"级别的即时动态
 
     何时不用：
-    - 单标的新闻深挖 → web.search_news + web.fetch（标的级证据链）
+    - 股票单标的新闻 / 官方披露 → data.get_news，返回 URL 再用 web.fetch 读原文；
+      只有无覆盖或 provider 故障才降级 web.search_news
+    - Crypto 单币种新闻 → web.search_news（已注册 feed 只有市场级覆盖）
     - 历史新闻回溯 → 快讯流只有最近一段，不是新闻库
 
     坑：

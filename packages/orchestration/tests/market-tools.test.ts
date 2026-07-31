@@ -63,6 +63,32 @@ describe("data.get_news", () => {
     expect(capturedUrl).toContain("as_of=2026-07-28T10%3A00%3A00Z");
     expect(capturedUrl).toContain("kinds=disclosure%2Cmedia");
   });
+
+  it("rejects uncovered crypto symbol and inverted PIT window", () => {
+    const schema = dataGetNewsTool.inputSchema!;
+    expect(schema.safeParse({ market: "crypto", symbol: "BTC/USDT" }).success).toBe(false);
+    expect(schema.safeParse({ market: "crypto" }).success).toBe(true);
+    expect(schema.safeParse({
+      market: "us",
+      since: "2026-07-29T00:00:00Z",
+      asOf: "2026-07-28T00:00:00Z",
+    }).success).toBe(false);
+  });
+
+  it("propagates 4xx request errors instead of reporting provider partial failure", async () => {
+    mockFetch(async () =>
+      new Response(
+        JSON.stringify({ code: "NEWS_SCOPE_NOT_SUPPORTED", message: "no coverage" }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      ),
+    );
+    await expect(
+      dataGetNewsTool.execute!(
+        { market: "jp", symbol: "6758.T", kinds: ["disclosure"] },
+        ctx(),
+      ),
+    ).rejects.toMatchObject({ code: "NEWS_SCOPE_NOT_SUPPORTED", status: 422 });
+  });
 });
 
 describe("data.get_market_news", () => {
