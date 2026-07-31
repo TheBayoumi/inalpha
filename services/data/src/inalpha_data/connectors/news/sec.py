@@ -20,6 +20,7 @@ class SecNewsProvider:
     """通过 SEC 官方 JSON 获取美国上市公司披露。"""
 
     name = "us"
+    coverage = "snapshot_only"
 
     def __init__(self, *, user_agent: str, timeout_s: float, min_interval_s: float) -> None:
         self._client = httpx.AsyncClient(
@@ -53,7 +54,11 @@ class SecNewsProvider:
             payload = await self._get_json(_SUBMISSIONS_URL.format(cik=cik))
             items = parse_submissions(payload, query, fetched_at, cik)
             return ProviderResult(
-                self.name, "ok" if items else "no_results", fetched_at=fetched_at, items=items
+                self.name,
+                "ok" if items else "no_results",
+                fetched_at=fetched_at,
+                items=items,
+                coverage="snapshot_only",
             )
         except httpx.TimeoutException as exc:
             return ProviderResult(self.name, "timeout", fetched_at=fetched_at, error=str(exc))

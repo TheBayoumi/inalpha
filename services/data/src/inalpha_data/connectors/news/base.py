@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from ...news_models import NewsItem, NewsQuery, ProviderStatusCode
 
@@ -17,12 +17,14 @@ class ProviderResult:
     fetched_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     items: list[NewsItem] = field(default_factory=list)
     error: str | None = None
+    coverage: Literal["complete", "snapshot_only"] = "complete"
 
 
 class NewsProvider(Protocol):
     """新闻 provider 的最小接口。"""
 
     name: str
+    coverage: Literal["complete", "snapshot_only"]
 
     def supports(self, query: NewsQuery) -> bool:
         """当前 provider 是否真实覆盖查询 scope。"""

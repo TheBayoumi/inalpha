@@ -15,6 +15,7 @@ class CnNewsProvider:
     """A 股市场快讯与个股东财新闻。"""
 
     name = "eastmoney"
+    coverage = "snapshot_only"
 
     def supports(self, query: NewsQuery) -> bool:
         """东财只覆盖 A 股媒体与市场快讯。"""
@@ -49,7 +50,11 @@ class CnNewsProvider:
                 self.name, "upstream_error", fetched_at=fetched_at, error=str(exc)
             )
         return ProviderResult(
-            self.name, "ok" if items else "no_results", fetched_at=fetched_at, items=items
+            self.name,
+            "ok" if items else "no_results",
+            fetched_at=fetched_at,
+            items=items,
+            coverage="snapshot_only",
         )
 
     async def close(self) -> None:
@@ -60,6 +65,7 @@ class YahooNewsProvider:
     """Yahoo Finance 全球 ticker 新闻聚合兜底。"""
 
     name = "yfinance"
+    coverage = "snapshot_only"
 
     def supports(self, query: NewsQuery) -> bool:
         """Yahoo ticker 新闻仅覆盖非 Crypto 的媒体消息。"""
@@ -82,7 +88,11 @@ class YahooNewsProvider:
             )
         items = _items(raw, query, fetched_at, "media", "yfinance", "aggregator")
         return ProviderResult(
-            self.name, "ok" if items else "no_results", fetched_at=fetched_at, items=items
+            self.name,
+            "ok" if items else "no_results",
+            fetched_at=fetched_at,
+            items=items,
+            coverage="snapshot_only",
         )
 
     async def close(self) -> None:

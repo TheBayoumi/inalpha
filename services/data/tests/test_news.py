@@ -174,6 +174,8 @@ def test_news_naive_as_of_is_assumed_utc(
     assert r.status_code == 200
     assert r.json()["as_of"] == "2026-07-29T12:00:00Z"
     assert len(r.json()["items"]) == 1
+    assert r.json()["coverage_complete"] is False
+    assert r.json()["providers"][0]["coverage"] == "snapshot_only"
 
 
 def test_market_only_news_does_not_claim_yfinance_venue(

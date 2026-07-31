@@ -19,6 +19,7 @@ _BASE_URL = "https://www1.hkexnews.hk"
 
 class HkexNewsProvider:
     name = "hk"
+    coverage = "snapshot_only"
 
     def __init__(self, *, timeout_s: float) -> None:
         self._client = httpx.AsyncClient(
@@ -50,7 +51,11 @@ class HkexNewsProvider:
             )
             items = parse_rows([*chinese, *english], query, fetched_at)
             return ProviderResult(
-                self.name, "ok" if items else "no_results", fetched_at=fetched_at, items=items
+                self.name,
+                "ok" if items else "no_results",
+                fetched_at=fetched_at,
+                items=items,
+                coverage=self.coverage,
             )
         except httpx.TimeoutException as exc:
             return ProviderResult(self.name, "timeout", fetched_at=fetched_at, error=str(exc))

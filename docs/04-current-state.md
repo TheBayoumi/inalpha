@@ -202,9 +202,13 @@ D-9 把决策护栏（Plan/Exec + 风控 + 沙盒）做扎实后，D-10 在**数
 - **统一多市场新闻**：`GET /news` 与 `data.get_news` 统一 `market_news` / `media` /
   `disclosure` 契约，首批接入东财、SEC、HKEX 与 Crypto 专业 feed；股票市场级快讯
   用代表指数/ETF 的 Yahoo 新闻代理并在条目中保留代理 ticker，不冒充完整新闻线。
-  请求支持 `as_of` / `since` 的 PIT 过滤，响应保留逐 provider 状态、`is_partial` 与
-  来源等级；旧 `venue + symbol` 请求继续兼容。`SentimentAnalyst` 与 `MacroAnalyst`
-  已消费结构化新闻，来源不可用时再显式降级 web 搜索。
+  `as_of` / `since` 只在当前 provider 快照上做截止过滤，不是历史新闻库；历史窗口用
+  `coverage_complete=false` 与逐 provider `coverage=snapshot_only` 显式标注覆盖不足，
+  不能把空结果解读为“当时没有新闻”。响应另保留逐 provider 状态、`is_partial` 与
+  来源等级；无 provider 覆盖的 market/symbol/kinds/language 组合返
+  `422 NEWS_SCOPE_NOT_SUPPORTED`。旧 `venue + symbol` 请求继续兼容。
+  `SentimentAnalyst` 与 `MacroAnalyst` 已消费结构化新闻，外部内容以不可执行证据块
+  送入 LLM，来源不可用时再显式降级 web 搜索。
 - **金融时效**：web/news 与基本面均无 API key 依赖；analyst 数据源不可用时降级到
   LLM-only 并标低 confidence，不静默用过时数据。
 
