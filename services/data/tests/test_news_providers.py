@@ -81,7 +81,7 @@ async def test_rss_provider_reuses_cached_items_on_304() -> None:
     assert second.items[0].title == "T"
 
 
-def test_dedupe_prefers_official_source() -> None:
+def test_dedupe_prefers_official_source_without_mutating_inputs() -> None:
     query = NewsQuery(market="us", symbol="AAPL")
     ts = datetime(2026, 7, 28, tzinfo=UTC)
     media = NewsItem(title="Event", link="https://x.test/a?utm_source=z", published_at=ts,
@@ -92,3 +92,5 @@ def test_dedupe_prefers_official_source() -> None:
     assert len(result) == 1
     assert result[0].source_name == "sec"
     assert "wire" in result[0].alternative_sources
+    assert media.alternative_sources == []
+    assert official.alternative_sources == []
