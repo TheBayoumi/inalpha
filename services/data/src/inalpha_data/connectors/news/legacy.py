@@ -16,6 +16,16 @@ class CnNewsProvider:
 
     name = "eastmoney"
 
+    def supports(self, query: NewsQuery) -> bool:
+        """东财只覆盖 A 股媒体与市场快讯。"""
+        market_matches = query.market == "cn" or query.venue in {"baostock", "akshare"}
+        supported_kinds = {"media"} if query.symbol else {"market_news"}
+        return (
+            market_matches
+            and not query.language
+            and (not query.kinds or bool(set(query.kinds) & supported_kinds))
+        )
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         fetched_at = datetime.now(UTC)
         if query.market != "cn" and query.venue not in {"baostock", "akshare"}:
@@ -50,6 +60,15 @@ class YahooNewsProvider:
     """Yahoo Finance 全球 ticker 新闻聚合兜底。"""
 
     name = "yfinance"
+
+    def supports(self, query: NewsQuery) -> bool:
+        """Yahoo ticker 新闻仅覆盖非 Crypto 的媒体消息。"""
+        return bool(
+            query.symbol
+            and query.market != "crypto"
+            and not query.language
+            and (not query.kinds or "media" in query.kinds)
+        )
 
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         fetched_at = datetime.now(UTC)

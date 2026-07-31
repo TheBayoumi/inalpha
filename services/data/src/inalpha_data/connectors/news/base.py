@@ -24,6 +24,10 @@ class NewsProvider(Protocol):
 
     name: str
 
+    def supports(self, query: NewsQuery) -> bool:
+        """当前 provider 是否真实覆盖查询 scope。"""
+        ...
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         """拉取并标准化当前 provider 能覆盖的事件。"""
         ...

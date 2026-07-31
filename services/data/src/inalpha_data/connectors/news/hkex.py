@@ -27,6 +27,15 @@ class HkexNewsProvider:
             headers={"User-Agent": "Mozilla/5.0 Inalpha"},
         )
 
+    def supports(self, query: NewsQuery) -> bool:
+        """HKEX 只覆盖港股单标的中英文官方披露。"""
+        return bool(
+            query.market == "hk"
+            and query.symbol
+            and (not query.kinds or "disclosure" in query.kinds)
+            and (not query.language or query.language in {"en", "en-HK", "zh", "zh-HK"})
+        )
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         fetched_at = datetime.now(UTC)
         if query.market != "hk" or not query.symbol:

@@ -28,6 +28,15 @@ class YahooMarketNewsProvider:
 
     name = "yfinance_market_proxy"
 
+    def supports(self, query: NewsQuery) -> bool:
+        """市场代理只覆盖无标的的 market_news。"""
+        return bool(
+            not query.symbol
+            and query.market in _MARKET_PROXIES
+            and not query.language
+            and (not query.kinds or "market_news" in query.kinds)
+        )
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         """拉市场代理 ticker 新闻，并明确标注其代理性质。"""
         fetched_at = datetime.now(UTC)

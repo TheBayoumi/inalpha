@@ -28,6 +28,15 @@ class RssFeedProvider:
         self._last_modified: str | None = None
         self._cached: list[NewsItem] = []
 
+    def supports(self, query: NewsQuery) -> bool:
+        """Crypto feed 只覆盖无标的的市场级媒体消息。"""
+        return bool(
+            query.market == "crypto"
+            and not query.symbol
+            and (not query.kinds or "media" in query.kinds)
+            and (not query.language or query.language == self.definition.language)
+        )
+
     async def fetch(self, query: NewsQuery) -> ProviderResult:
         """条件请求 feed，并标准化条目时间和来源。"""
         fetched_at = datetime.now(UTC)
