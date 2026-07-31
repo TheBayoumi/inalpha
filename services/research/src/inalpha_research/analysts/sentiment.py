@@ -26,6 +26,7 @@ from inalpha_shared import get_logger
 
 from ..researchers.base import infer_asset_type
 from .base import Analyst
+from .untrusted_evidence import UNTRUSTED_EVIDENCE_RULES, render_untrusted_evidence
 
 _logger = get_logger(__name__)
 
@@ -77,7 +78,7 @@ Return ONLY a JSON object with this exact shape:
 
 Never claim numeric values you weren't given. Confidence and factor.strength
 should reflect data freshness and how extreme + sustained the reading is.
-""".strip()
+""".strip() + "\n\n" + UNTRUSTED_EVIDENCE_RULES
 
 
 class SentimentAnalyst(Analyst):
@@ -263,28 +264,23 @@ def _format_user_prompt_llm_only(
 
 
 def _render_news_block(news: list[dict[str, Any]]) -> str:
-    """把 news items 渲染成 LLM 可读 block；空时返清晰占位。"""
+    """把新闻作为不可信结构化证据渲染；空时返清晰占位。"""
     if not news:
         return "live_news: (none available — sentiment must come from training knowledge)\n"
-    lines = ["live_news (newest first):"]
-    for n in news:
-        ts = n.get("published_at") or "?"
-        title = (n.get("title") or "").strip()
-        publisher = n.get("publisher") or ""
-        if not title:
-            continue
-        lines.append(f"  - [{ts}] {publisher}: {title}")
-    return "\n".join(lines) + "\n"
+    return render_untrusted_evidence(
+        "live_news_newest_first",
+        news,
+        fields={"published_at": 40, "publisher": 100, "title": 300},
+        limit=8,
+    ) + "\n"
 
 
 def _render_web_results(results: list[dict[str, Any]]) -> str:
     if not results:
         return ""
-    lines = ["web_search_results (latest):"]
-    for r in results[:3]:
-        title = r.get("title", "")[:100]
-        snippet = r.get("snippet", "")[:200]
-        lines.append(f"  - {title}")
-        if snippet:
-            lines.append(f"    {snippet}")
-    return "\n".join(lines) + "\n"
+    return render_untrusted_evidence(
+        "web_search_results_latest",
+        results,
+        fields={"title": 200, "snippet": 500},
+        limit=3,
+    ) + "\n"
