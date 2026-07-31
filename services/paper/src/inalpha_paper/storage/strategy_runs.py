@@ -421,7 +421,7 @@ async def list_decisions(
     *,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """按时间顺序列出某 run 的决策时间线（复盘用）。"""
+    """按落库时间倒序列出某 run 的最新决策（复盘用）。"""
     async with conn.cursor() as cur:
         await cur.execute(
             """
@@ -430,7 +430,7 @@ async def list_decisions(
                    closed_profit_abs, closed_profit_pct
             FROM strategy_run_decisions
             WHERE run_id = %s
-            ORDER BY created_at, id
+            ORDER BY created_at DESC, id DESC
             LIMIT %s
             """,
             (str(run_id), limit),
