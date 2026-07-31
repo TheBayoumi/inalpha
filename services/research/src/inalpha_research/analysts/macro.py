@@ -28,6 +28,7 @@ from typing import Any
 
 from ..researchers.base import infer_asset_type
 from .base import Analyst
+from .untrusted_evidence import UNTRUSTED_EVIDENCE_RULES, render_untrusted_evidence
 
 #: FRED daily 序列 → 展示名。与 factor 服务 macro_adapter ``_SERIES_META`` 的
 #: daily 组保持一致（都是 +1 天发布滞后的市场化序列）。
@@ -191,7 +192,7 @@ Be explicit about how each event translates to the current market_type.
 ``live_macro_readings`` and/or ``live_macro_news`` with actual data, your
 ``confidence`` may go up to **0.7** (still: only cite numbers given verbatim).
 When BOTH are ``(none available ...)``, cap your ``confidence`` at **0.5**.
-""".strip()
+""".strip() + "\n\n" + UNTRUSTED_EVIDENCE_RULES
 
 
 class MacroAnalyst(Analyst):
@@ -450,14 +451,12 @@ def _format_user_prompt(
         )
 
     if macro_news:
-        news_lines = ["live_macro_news (SPY-proxy headlines, newest first):"]
-        for n in macro_news:
-            ts = n.get("published_at") or "?"
-            title = (n.get("title") or "").strip()
-            publisher = n.get("publisher") or ""
-            if title:
-                news_lines.append(f"  - [{ts}] {publisher}: {title}")
-        news_block = "\n".join(news_lines)
+        news_block = render_untrusted_evidence(
+            "live_macro_news_spy_proxy_newest_first",
+            macro_news,
+            fields={"published_at": 40, "publisher": 100, "title": 300},
+            limit=8,
+        )
     else:
         news_block = (
             "live_macro_news: (none available — restrict yourself to calendar + caveats, "
