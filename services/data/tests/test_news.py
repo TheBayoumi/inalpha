@@ -273,9 +273,18 @@ async def test_cn_provider_preserves_failure_and_provenance(
 
 
 def test_news_accepts_comma_separated_kinds(
-    client: TestClient, auth_headers: dict[str, str]
+    client: TestClient,
+    auth_headers: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """TS client 的逗号分隔 kinds 应在 FastAPI list 包装后继续展开。"""
+    from inalpha_data.connectors import yfinance_conn as yf
+
+    async def mock_news(symbol: str, limit: int = 20) -> list[dict[str, object]]:
+        assert symbol == "SPY"
+        return []
+
+    monkeypatch.setattr(yf._connector, "fetch_news", mock_news)
     r = client.get(
         "/news",
         headers=auth_headers,

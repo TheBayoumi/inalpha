@@ -22,10 +22,15 @@ def filter_and_dedupe(items: list[NewsItem], query: NewsQuery) -> list[NewsItem]
             winners[key] = item
             continue
         if _TIER_WEIGHT[item.source_tier] > _TIER_WEIGHT[current.source_tier]:
-            item.alternative_sources = _sources(current, item)
-            winners[key] = item
+            winners[key] = item.model_copy(
+                deep=True,
+                update={"alternative_sources": _sources(current, item)},
+            )
         else:
-            current.alternative_sources = _sources(current, item)
+            winners[key] = current.model_copy(
+                deep=True,
+                update={"alternative_sources": _sources(current, item)},
+            )
     epoch = datetime.min.replace(tzinfo=UTC)
     return sorted(winners.values(), key=lambda item: item.published_at or epoch, reverse=True)[
         : query.limit

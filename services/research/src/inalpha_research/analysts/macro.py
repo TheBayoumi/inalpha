@@ -221,6 +221,7 @@ class MacroAnalyst(Analyst):
                 market="us",
                 symbol="SPY",
                 as_of=as_of,
+                since=as_of - timedelta(days=lookback_days),
                 kinds=["media"],
                 limit=8,
             ),

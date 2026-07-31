@@ -664,7 +664,7 @@ async def test_macro_fred_readings_in_prompt(data_client: DataClient) -> None:
     respx.post("http://data-mock.test/backfill/bars").mock(
         return_value=Response(200, json={})
     )
-    respx.get("http://data-mock.test/news").mock(
+    news_route = respx.get("http://data-mock.test/news").mock(
         return_value=Response(200, json={"items": []})
     )
 
@@ -695,6 +695,10 @@ async def test_macro_fred_readings_in_prompt(data_client: DataClient) -> None:
     assert "curve_slope (10Y-2Y): -0.60 (inverted)" in user_prompt
     # staleness 标注（昨天的观测 = 1d ago）
     assert "1d ago" in user_prompt
+    # 新闻 PIT 窗口必须与本次研究 lookback 对齐，避免旧标题冒充 live evidence。
+    news_params = news_route.calls.last.request.url.params
+    assert news_params["as_of"] == as_of.isoformat()
+    assert news_params["since"] == (as_of - timedelta(days=30)).isoformat()
     # 双档 cap：有 live 读数 → 0.7（代码级 clamp，0.95 被压下来）
     assert brief.confidence == 0.7
 
