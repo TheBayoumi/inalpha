@@ -694,6 +694,7 @@ def _row_to_order_record(row: dict[str, Any]) -> OrderRecord:
         ts_event=row["ts_event"],
         ts_init=row["ts_init"],
         trade_plan_id=str(row["trade_plan_id"]) if row.get("trade_plan_id") else None,
+        strategy_run_id=row.get("strategy_run_id"),
     )
 
 

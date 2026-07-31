@@ -72,6 +72,8 @@ export interface OrderRecord {
   ts_event: string;
   ts_init: string;
   trade_plan_id: string | null;
+  /** 模拟盘产生的订单关联对应 run；手工单为 null。 */
+  strategy_run_id: string | null;
 }
 
 /** 运行日志级别 —— 与后端 live_runner 写入一致。 */

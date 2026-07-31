@@ -121,7 +121,10 @@ async def list_by_account(
     sql = (
         "SELECT client_order_id, venue, symbol, side, type, quantity, price, "
         "status, filled_quantity, avg_fill_price, fee, notional, realized_pnl, "
-        "ts_event, ts_init, trade_plan_id "
+        "ts_event, ts_init, trade_plan_id, "
+        "(SELECT d.run_id FROM strategy_run_decisions AS d "
+        " WHERE d.order_id = orders.client_order_id "
+        " ORDER BY d.created_at DESC, d.id DESC LIMIT 1) AS strategy_run_id "
         "FROM orders WHERE account_id = %s"
     )
     params: list[Any] = [str(account_id)]
@@ -131,7 +134,7 @@ async def list_by_account(
     if status is not None:
         sql += " AND status = %s"
         params.append(status)
-    sql += " ORDER BY ts_event DESC LIMIT %s"
+    sql += " ORDER BY ts_event DESC, client_order_id DESC LIMIT %s"
     params.append(limit)
 
     async with conn.cursor() as cur:
