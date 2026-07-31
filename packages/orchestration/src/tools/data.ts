@@ -410,7 +410,9 @@ export const dataGetNewsTool = createTool({
     何时用：单标的新闻、公司公告、市场消息面，以及需要 asOf 截止时间的研究证据。
     何时不用：价格/K线用 data.get_bars；要读全文时对返回 URL 再用 web.fetch。
     坑：disclosure 不等于媒体新闻；is_partial=true 表示至少一个专业源故障，不能把
-    空结果解释成“没有消息”。历史查询会排除无可靠发布时间和晚于 asOf 的条目。
+    空结果解释成“没有消息”。asOf/since 只对当前 provider 快照做截止过滤，不是历史
+    新闻库；coverage_complete=false 表示请求窗口可能超出来源快照，不能把空结果当作
+    “当时没有新闻”，应降级历史 Web 检索并说明覆盖不足。
   `.trim(),
   inputSchema: z.object({
     market: z.enum([

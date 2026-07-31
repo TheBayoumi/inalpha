@@ -80,6 +80,7 @@ class NewsProviderStatus(BaseModel):
     error: str | None = None
     fetched_at: datetime
     item_count: int = 0
+    coverage: Literal["complete", "snapshot_only"] = "complete"
 
 
 class NewsResponse(BaseModel):
@@ -94,3 +95,4 @@ class NewsResponse(BaseModel):
     items: list[NewsItem] = Field(default_factory=list)
     providers: list[NewsProviderStatus] = Field(default_factory=list)
     is_partial: bool = False
+    coverage_complete: bool = True

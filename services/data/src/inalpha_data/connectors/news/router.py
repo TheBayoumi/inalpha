@@ -37,6 +37,10 @@ class NewsRouter:
             items=items,
             providers=statuses,
             is_partial=any(status.status in failures for status in statuses),
+            coverage_complete=(
+                not (query.as_of or query.since)
+                or all(provider.coverage == "complete" for provider in selected)
+            ),
         )
 
     def _select(self, query: NewsQuery) -> list[NewsProvider]:
@@ -114,4 +118,5 @@ def _status(result: ProviderResult) -> NewsProviderStatus:
         error=result.error,
         fetched_at=result.fetched_at,
         item_count=len(result.items),
+        coverage=result.coverage,
     )

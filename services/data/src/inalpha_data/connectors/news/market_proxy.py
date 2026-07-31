@@ -27,6 +27,7 @@ class YahooMarketNewsProvider:
     """用代表性市场载体聚合无 symbol 市场新闻。"""
 
     name = "yfinance_market_proxy"
+    coverage = "snapshot_only"
 
     def supports(self, query: NewsQuery) -> bool:
         """市场代理只覆盖无标的的 market_news。"""
@@ -52,7 +53,11 @@ class YahooMarketNewsProvider:
             )
         items = [_item(value, query, fetched_at, ticker, label) for value in raw]
         return ProviderResult(
-            self.name, "ok" if items else "no_results", fetched_at=fetched_at, items=items
+            self.name,
+            "ok" if items else "no_results",
+            fetched_at=fetched_at,
+            items=items,
+            coverage="snapshot_only",
         )
 
     async def close(self) -> None:

@@ -18,6 +18,7 @@ class RssFeedProvider:
     def __init__(self, definition: FeedDefinition, *, timeout_s: float) -> None:
         self.definition = definition
         self.name = f"rss:{definition.id}"
+        self.coverage = "snapshot_only"
         self._client = httpx.AsyncClient(
             timeout=timeout_s,
             trust_env=False,
@@ -55,6 +56,7 @@ class RssFeedProvider:
                     "ok" if self._cached else "no_results",
                     fetched_at=fetched_at,
                     items=self._cached,
+                    coverage="snapshot_only",
                 )
             response.raise_for_status()
             parsed = await asyncio.to_thread(feedparser.parse, response.content)
@@ -70,6 +72,7 @@ class RssFeedProvider:
                 "ok" if self._cached else "no_results",
                 fetched_at=fetched_at,
                 items=self._cached,
+                coverage="snapshot_only",
             )
         except httpx.TimeoutException as exc:
             return ProviderResult(self.name, "timeout", fetched_at=fetched_at, error=str(exc))
