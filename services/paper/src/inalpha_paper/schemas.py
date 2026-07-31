@@ -705,6 +705,7 @@ class OrderRecord(BaseModel):
     ts_event: datetime
     ts_init: datetime
     trade_plan_id: str | None = None
+    strategy_run_id: UUID | None = None
 
 
 class PositionRecord(BaseModel):

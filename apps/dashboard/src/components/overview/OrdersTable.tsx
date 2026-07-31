@@ -3,12 +3,14 @@
 import { useLocale, useTranslations } from "next-intl";
 
 import type { OrderRecord } from "@/lib/types";
+import { useRouter } from "@/i18n/navigation";
 import { cn } from "@/lib/cn";
+import { sortOrdersNewestFirst } from "@/lib/orders";
 import {
+  fmtDateTime,
   fmtNum,
   fmtQty,
   fmtSigned,
-  fmtTime,
   instrumentLabel,
   pnlColor,
 } from "@/lib/format";
@@ -27,6 +29,8 @@ export function OrdersTable({
   const t = useTranslations("overview.orders");
   const tc = useTranslations("common");
   const locale = useLocale();
+  const router = useRouter();
+  const sortedOrders = sortOrdersNewestFirst(orders);
 
   return (
     // h-full:总览里与策略池并排,grid stretch 下两卡等高。
@@ -59,13 +63,31 @@ export function OrdersTable({
               </TableHeadRow>
             </thead>
             <tbody>
-              {orders.map((o) => (
+              {sortedOrders.map((o) => (
                 <tr
                   key={o.client_order_id}
-                  className="border-t border-border-subtle/60 hover:bg-bg-elev/30"
+                  className={cn(
+                    "border-t border-border-subtle/60 transition-colors hover:bg-bg-elev/30",
+                    o.strategy_run_id && "cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan",
+                  )}
+                  onClick={() => {
+                    if (o.strategy_run_id) router.push(`/runners/${o.strategy_run_id}`);
+                  }}
+                  onKeyDown={(event) => {
+                    if (!o.strategy_run_id || (event.key !== "Enter" && event.key !== " ")) return;
+                    event.preventDefault();
+                    router.push(`/runners/${o.strategy_run_id}`);
+                  }}
+                  tabIndex={o.strategy_run_id ? 0 : undefined}
+                  role={o.strategy_run_id ? "link" : undefined}
+                  aria-label={
+                    o.strategy_run_id
+                      ? `${fmtDateTime(o.ts_event, locale)} · ${instrumentLabel(o.symbol, o.venue)}`
+                      : undefined
+                  }
                 >
-                  <Td mono muted>
-                    {fmtTime(o.ts_event, locale)}
+                  <Td mono muted className="whitespace-nowrap">
+                    {fmtDateTime(o.ts_event, locale)}
                   </Td>
                   <Td>
                     <span className="font-medium text-fg">

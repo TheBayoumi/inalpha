@@ -107,6 +107,7 @@ async def test_process_bar_routes_through_plan_exec(app_with_lifespan: Any) -> N
     assert len(orders) == 1
     assert orders[0]["status"] == "FILLED"
     assert orders[0]["side"] == "BUY"
+    assert orders[0]["strategy_run_id"] == run["id"]
     # 持仓出现（BTC/USDT）
     assert len(positions) == 1
     assert positions[0]["symbol"] == "BTC/USDT"
