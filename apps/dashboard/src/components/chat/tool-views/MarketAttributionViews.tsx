@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { cn } from "@/lib/cn";
 
 import { shortTimestamp } from "./format";
@@ -39,13 +41,19 @@ interface MarketNewsPayload {
 }
 
 export function isMarketNews(v: unknown): v is MarketNewsPayload {
-  if (!isObj(v) || !Array.isArray(v.items) || v.items.length === 0) return false;
+  if (!isObj(v) || !Array.isArray(v.items)) return false;
+  const hasNewsState =
+    Array.isArray(v.providers) ||
+    typeof v.is_partial === "boolean" ||
+    typeof v.coverage_complete === "boolean";
+  if (v.items.length === 0) return hasNewsState;
   return v.items.every((it) => isObj(it) && typeof it.title === "string");
 }
 
 const NEWS_CAP = 8;
 
 export function MarketNewsView({ v }: { v: MarketNewsPayload }) {
+  const t = useTranslations("chat.marketNews");
   const items = v.items.slice(0, NEWS_CAP);
   const unavailable = (v.providers ?? []).filter(
     (provider) => !["ok", "no_results"].includes(provider.status),
@@ -54,10 +62,13 @@ export function MarketNewsView({ v }: { v: MarketNewsPayload }) {
     <div className="flex flex-col">
       {(v.is_partial || v.coverage_complete === false || unavailable.length > 0) && (
         <div className="mb-1.5 rounded-sm border border-gold/30 bg-gold/5 px-2 py-1 font-mono text-[9px] leading-relaxed text-gold/90">
-          {v.is_partial && "来源部分失败。"}
-          {v.coverage_complete === false && " 历史窗口覆盖不完整。"}
+          {v.is_partial && t("partial")}
+          {v.coverage_complete === false && ` ${t("snapshotOnly")}`}
           {unavailable.length > 0 && ` ${unavailable.map((p) => `${p.provider}:${p.status}`).join(" · ")}`}
         </div>
+      )}
+      {items.length === 0 && (
+        <div className="font-mono text-[10px] text-fg-muted/60">{t("empty")}</div>
       )}
       {items.map((n, i) => (
         <div key={i} className="border-b border-border-subtle/50 py-1.5 first:pt-0 last:border-b-0">

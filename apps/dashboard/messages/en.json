@@ -473,6 +473,11 @@
     "toolResult": "output",
     "errorGeneric": "Agent reply failed. Please retry — likely an upstream LLM error or dropped stream.",
     "errorDismiss": "Dismiss",
+    "marketNews": {
+      "partial": "Some sources failed.",
+      "snapshotOnly": "The historical window is not fully covered.",
+      "empty": "No news data available."
+    },
     "context": {
       "viewing": "Viewing",
       "dismiss": "Don't include this page",
