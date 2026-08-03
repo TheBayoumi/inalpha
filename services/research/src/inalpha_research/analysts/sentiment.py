@@ -120,6 +120,8 @@ class SentimentAnalyst(Analyst):
                 limit=8,
             )
             crypto_news = news_result.get("items", [])
+            provider_status = _provider_status_summary(news_result.get("providers"))
+            structured_failure = _has_structured_failure(news_result, provider_status)
             try:
                 entries = await _fetch_fng(limit=_DEFAULT_LIMIT)
             except Exception as exc:
@@ -135,15 +137,21 @@ class SentimentAnalyst(Analyst):
                     f"{symbol} crypto market sentiment fear greed {as_of.year}",
                     max_results=5,
                 )
+                self._confidence_cap = 0.7 if (crypto_news or web_results) else 0.5
                 return _format_user_prompt_llm_only(
                     symbol=symbol,
                     as_of=as_of,
                     market_type=market_type,
-                    fng_note="(Fear & Greed API unavailable — using web search)",
+                    fng_note=(
+                        "(Fear & Greed API unavailable — using web search; "
+                        f"provider_status_counts={provider_status}"
+                        f"{'; structured news unavailable or partial' if structured_failure else ''})"
+                    ),
                     news=crypto_news,
                     web_results=web_results,
                 )
             latest = entries[0]
+            self._confidence_cap = 0.7
             recent_values = [int(e["value"]) for e in entries]
             trend = _summarize_trend(recent_values)
             return _format_user_prompt_with_fng(
@@ -170,14 +178,7 @@ class SentimentAnalyst(Analyst):
         web_news = await self._data.get_web_search(
             f"{symbol} stock news sentiment analysis", max_results=5
         )
-        structured_failure = bool(
-            news_result.get("is_partial")
-            or news_result.get("error")
-            or any(
-                status in {"timeout", "rate_limited", "upstream_error"}
-                for status in provider_status
-            )
-        )
+        structured_failure = _has_structured_failure(news_result, provider_status)
         self._confidence_cap = 0.7 if (news or web_news) else 0.5
         partial_note = "; structured sources unavailable or partial" if structured_failure else ""
         return _format_user_prompt_llm_only(
@@ -274,6 +275,20 @@ def _format_user_prompt_llm_only(
         f"(recent / repeated negative-tone → bearish sentiment; positive flow → bullish).\n"
         f"When all data blocks are empty, fall back to training knowledge with **lower confidence**.\n\n"
         f"Output the required JSON only."
+    )
+
+
+def _has_structured_failure(
+    result: dict[str, Any], provider_status: dict[str, int]
+) -> bool:
+    """结构化新闻是否发生请求级或 provider 级故障。"""
+    return bool(
+        result.get("is_partial")
+        or result.get("error")
+        or any(
+            status in {"timeout", "rate_limited", "upstream_error"}
+            for status in provider_status
+        )
     )
 
 
