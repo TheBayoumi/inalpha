@@ -823,8 +823,45 @@ async def test_macro_confidence_capped_at_05_when_all_feeds_down(
     assert brief.confidence == 0.5
 
 
+@respx.mock
+async def test_macro_snapshot_news_does_not_raise_confidence(
+    data_client: DataClient,
+) -> None:
+    """历史窗口仅有 provider 快照时，提示覆盖边界并将新闻置信度降档。"""
+    respx.get("http://data-mock.test/bars").mock(
+        return_value=Response(500, json={"code": "DB_DOWN"})
+    )
+    respx.post("http://data-mock.test/backfill/bars").mock(
+        return_value=Response(500, json={})
+    )
+    respx.get("http://data-mock.test/news").mock(
+        return_value=Response(
+            200,
+            json={
+                "items": [{"title": "Old snapshot headline"}],
+                "coverage_complete": False,
+            },
+        )
+    )
+    llm = FakeLLMClient(
+        {"macro analyst": {"stance": "bullish", "confidence": 0.9, "summary": "vibes"}}
+    )
+    analyst = MacroAnalyst(llm=llm, data=data_client)
+
+    brief = await analyst.run(
+        venue="binance",
+        symbol="BTC/USDT",
+        timeframe="1h",
+        as_of=_as_of(),
+        lookback_days=30,
+    )
+
+    assert "news_coverage_note" in llm.calls[0]["user"]
+    assert "NOT evidence that no event occurred" in llm.calls[0]["user"]
+    assert brief.confidence == 0.5
+
+
 # ────────────────────────────────────────────────────────────────────
-# D-10: Fundamental with real financial data + Sentiment web search
 # ────────────────────────────────────────────────────────────────────
 
 
@@ -1062,6 +1099,47 @@ async def test_sentiment_non_crypto_uses_web_search(data_client: DataClient) -> 
     # Verify web search results appear in prompt
     assert "web_search_results" in user_prompt or "web_results" in user_prompt.lower()
     assert "cn_stock" in user_prompt or "market_type" in user_prompt
+
+
+@respx.mock
+async def test_sentiment_snapshot_news_caps_confidence(
+    data_client: DataClient,
+) -> None:
+    """非 Crypto 历史新闻仅为快照时，覆盖不足必须可见并限制置信度。"""
+    respx.get("http://data-mock.test/news").mock(
+        return_value=Response(
+            200,
+            json={
+                "items": [{"title": "Snapshot headline"}],
+                "providers": [{"provider": "yfinance", "status": "ok"}],
+                "coverage_complete": False,
+            },
+        )
+    )
+    respx.get("http://data-mock.test/web/search").mock(
+        return_value=Response(200, json={"results": []})
+    )
+    llm = FakeLLMClient(
+        {
+            "sentiment analyst": {
+                "stance": "bullish",
+                "confidence": 0.95,
+                "summary": "snapshot",
+            }
+        }
+    )
+    analyst = SentimentAnalyst(llm=llm, data=data_client)
+
+    brief = await analyst.run(
+        venue="akshare",
+        symbol="sh.600519",
+        timeframe="1d",
+        as_of=_as_of(),
+        lookback_days=30,
+    )
+
+    assert "historical news coverage is snapshot-only" in llm.calls[0]["user"]
+    assert brief.confidence == 0.5
 
 
 @respx.mock

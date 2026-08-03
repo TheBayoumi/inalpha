@@ -11,6 +11,11 @@ from ..cn_market import get_connector as get_cn_market
 from .base import ProviderResult
 
 
+def yahoo_error_status(exc: Exception) -> str:
+    """把 Yahoo 限流异常统一映射成机器可读状态。"""
+    return "rate_limited" if "rate limit" in str(exc).casefold() else "upstream_error"
+
+
 class CnNewsProvider:
     """A 股市场快讯与个股东财新闻。"""
 
@@ -83,9 +88,11 @@ class YahooNewsProvider:
         try:
             raw = await yfinance_conn.get_connector().fetch_news(query.symbol, limit=query.limit)
         except Exception as exc:
-            status = "rate_limited" if "rate limit" in str(exc).casefold() else "upstream_error"
             return ProviderResult(
-                self.name, status, fetched_at=fetched_at, error=str(exc)
+                self.name,
+                yahoo_error_status(exc),
+                fetched_at=fetched_at,
+                error=str(exc),
             )
         items = _items(raw, query, fetched_at, "media", "yfinance", "aggregator")
         return ProviderResult(

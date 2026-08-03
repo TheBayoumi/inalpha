@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from ...news_models import NewsItem, NewsQuery
 from .. import yfinance_conn
 from .base import ProviderResult
+from .legacy import yahoo_error_status
 
 _MARKET_PROXIES = {
     "us": ("SPY", "S&P 500 market proxy"),
@@ -49,7 +50,10 @@ class YahooMarketNewsProvider:
             raw = await yfinance_conn.get_connector().fetch_news(ticker, limit=query.limit)
         except Exception as exc:
             return ProviderResult(
-                self.name, "upstream_error", fetched_at=fetched_at, error=str(exc)
+                self.name,
+                yahoo_error_status(exc),
+                fetched_at=fetched_at,
+                error=str(exc),
             )
         items = [_item(value, query, fetched_at, ticker, label) for value in raw]
         return ProviderResult(

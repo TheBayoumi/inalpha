@@ -14,13 +14,17 @@ depends_on: str | tuple[str, ...] | None = None
 
 
 def upgrade() -> None:
-    """给非空 order_id 建立反向引用索引。"""
-    op.execute(
-        "CREATE INDEX strategy_run_decisions_order_idx "
-        "ON strategy_run_decisions (order_id) WHERE order_id IS NOT NULL"
-    )
+    """给非空 order_id 并发建立反向引用索引，避免阻塞持续写入。"""
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY strategy_run_decisions_order_idx "
+            "ON strategy_run_decisions (order_id) WHERE order_id IS NOT NULL"
+        )
 
 
 def downgrade() -> None:
-    """删除订单反向引用索引。"""
-    op.execute("DROP INDEX IF EXISTS strategy_run_decisions_order_idx")
+    """并发删除订单反向引用索引。"""
+    with op.get_context().autocommit_block():
+        op.execute(
+            "DROP INDEX CONCURRENTLY IF EXISTS strategy_run_decisions_order_idx"
+        )

@@ -120,6 +120,7 @@ class SentimentAnalyst(Analyst):
                 limit=8,
             )
             crypto_news = news_result.get("items", [])
+            coverage_complete = news_result.get("coverage_complete", True)
             provider_status = _provider_status_summary(news_result.get("providers"))
             structured_failure = _has_structured_failure(news_result, provider_status)
             try:
@@ -137,7 +138,9 @@ class SentimentAnalyst(Analyst):
                     f"{symbol} crypto market sentiment fear greed {as_of.year}",
                     max_results=5,
                 )
-                self._confidence_cap = 0.7 if (crypto_news or web_results) else 0.5
+                self._confidence_cap = (
+                    0.7 if coverage_complete and (crypto_news or web_results) else 0.5
+                )
                 return _format_user_prompt_llm_only(
                     symbol=symbol,
                     as_of=as_of,
@@ -145,13 +148,14 @@ class SentimentAnalyst(Analyst):
                     fng_note=(
                         "(Fear & Greed API unavailable — using web search; "
                         f"provider_status_counts={provider_status}"
-                        f"{'; structured news unavailable or partial' if structured_failure else ''})"
+                        f"{'; structured news unavailable or partial' if structured_failure else ''}"
+                        f"{'; historical news coverage is snapshot-only' if not coverage_complete else ''})"
                     ),
                     news=crypto_news,
                     web_results=web_results,
                 )
             latest = entries[0]
-            self._confidence_cap = 0.7
+            self._confidence_cap = 0.7 if coverage_complete else 0.5
             recent_values = [int(e["value"]) for e in entries]
             trend = _summarize_trend(recent_values)
             return _format_user_prompt_with_fng(
@@ -175,12 +179,16 @@ class SentimentAnalyst(Analyst):
         )
         news = news_result.get("items", [])
         provider_status = _provider_status_summary(news_result.get("providers"))
+        coverage_complete = news_result.get("coverage_complete", True)
         web_news = await self._data.get_web_search(
             f"{symbol} stock news sentiment analysis", max_results=5
         )
         structured_failure = _has_structured_failure(news_result, provider_status)
-        self._confidence_cap = 0.7 if (news or web_news) else 0.5
+        self._confidence_cap = (
+            0.7 if coverage_complete and (news or web_news) else 0.5
+        )
         partial_note = "; structured sources unavailable or partial" if structured_failure else ""
+        coverage_note = "; historical news coverage is snapshot-only" if not coverage_complete else ""
         return _format_user_prompt_llm_only(
             symbol=symbol,
             as_of=as_of,
@@ -188,8 +196,8 @@ class SentimentAnalyst(Analyst):
             fng_note=(
                 f"(non-crypto market — no Fear & Greed; {len(news)} structured headlines, "
                 f"{len(web_news)} web results; provider_status_counts={provider_status}"
-                f"{partial_note})"
-                if news or web_news or provider_status or structured_failure
+                f"{partial_note}{coverage_note})"
+                if news or web_news or provider_status or structured_failure or not coverage_complete
                 else "(non-crypto market — no Fear & Greed; all sources returned empty)"
             ),
             news=news,

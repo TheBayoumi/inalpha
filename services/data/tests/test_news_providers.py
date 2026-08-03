@@ -12,6 +12,7 @@ from inalpha_data.connectors.news.feed_models import FeedDefinition
 from inalpha_data.connectors.news.hkex import HkexNewsProvider
 from inalpha_data.connectors.news.hkex_parser import parse_rows
 from inalpha_data.connectors.news.legacy import YahooNewsProvider
+from inalpha_data.connectors.news.market_proxy import YahooMarketNewsProvider
 from inalpha_data.connectors.news.rss import RssFeedProvider
 from inalpha_data.connectors.news.sec_parser import parse_submissions
 from inalpha_data.news_models import NewsItem, NewsQuery
@@ -93,8 +94,17 @@ async def test_hkex_provider_respects_language_and_hong_kong_date_window(
     assert seen_params["toDate"] == ["20260730"]
 
 
-async def test_yahoo_provider_classifies_rate_limit(
+@pytest.mark.parametrize(
+    ("provider", "query"),
+    [
+        (YahooNewsProvider(), NewsQuery(market="us", symbol="AAPL")),
+        (YahooMarketNewsProvider(), NewsQuery(market="us")),
+    ],
+)
+async def test_yahoo_providers_classify_rate_limit(
     monkeypatch: pytest.MonkeyPatch,
+    provider: YahooNewsProvider | YahooMarketNewsProvider,
+    query: NewsQuery,
 ) -> None:
     """Yahoo 限流需保留机器可读状态，不能退化成普通上游错误。"""
     class FakeConnector:
@@ -105,7 +115,7 @@ async def test_yahoo_provider_classifies_rate_limit(
         "inalpha_data.connectors.news.legacy.yfinance_conn.get_connector",
         lambda: FakeConnector(),
     )
-    result = await YahooNewsProvider().fetch(NewsQuery(market="us", symbol="AAPL"))
+    result = await provider.fetch(query)
     assert result.status == "rate_limited"
 
 
