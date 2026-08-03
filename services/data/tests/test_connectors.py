@@ -256,6 +256,10 @@ def test_baostock_bars_map_all_tencent_periods(
         return _Response()
 
     monkeypatch.setattr("httpx.get", _fake_get)
+    monkeypatch.setattr(
+        "inalpha_data.connectors.baostock._tencent_window_end",
+        lambda *_args: datetime(2026, 7, 23, tzinfo=UTC),
+    )
     bars = asyncio.run(
         BaostockConnector().fetch_bars(
             "sh.600519", timeframe, datetime(2026, 7, 1, tzinfo=UTC), limit=5
