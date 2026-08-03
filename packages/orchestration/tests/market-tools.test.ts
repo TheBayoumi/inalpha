@@ -104,7 +104,7 @@ describe("data.get_news", () => {
 });
 
 describe("data.get_market_news", () => {
-  it("calls /market/news with market+limit and forwards token", async () => {
+  it("routes cn through the unified endpoint and forwards token", async () => {
     let capturedUrl = "";
     let capturedAuth = "";
     mockFetch(async (url, init) => {
@@ -119,8 +119,9 @@ describe("data.get_market_news", () => {
       { market: "cn", limit: 5 },
       ctx(),
     )) as Record<string, unknown>;
-    expect(capturedUrl).toContain("/market/news");
+    expect(capturedUrl).toContain("/news?");
     expect(capturedUrl).toContain("market=cn");
+    expect(capturedUrl).toContain("kinds=market_news%2Cmedia");
     expect(capturedUrl).toContain("limit=5");
     expect(capturedAuth).toBe(`Bearer ${TEST_TOKEN}`);
     expect((out.items as unknown[]).length).toBe(1);

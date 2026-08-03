@@ -155,25 +155,11 @@ export class DataClient {
     market?: string;
     limit?: number;
   }): Promise<Record<string, unknown>> {
-    if ((params.market ?? "cn") !== "cn") {
-      return await this.getNews({
-        market: params.market as NewsMarket,
-        limit: params.limit ?? 20,
-        kinds: ["market_news", "media"],
-      });
-    }
-    try {
-      return await this.http.get<Record<string, unknown>>("/market/news", {
-        market: "cn",
-        limit: String(params.limit ?? 20),
-      });
-    } catch (err) {
-      return {
-        market: "cn",
-        items: [],
-        error: err instanceof HttpClientError ? `upstream ${err.status}: ${err.message}` : String(err),
-      };
-    }
+    return await this.getNews({
+      market: (params.market ?? "cn") as NewsMarket,
+      limit: params.limit ?? 20,
+      kinds: ["market_news", "media"],
+    });
   }
 
   async getMarketSectors(params: {
