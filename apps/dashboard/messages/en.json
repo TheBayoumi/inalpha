@@ -476,7 +476,14 @@
     "marketNews": {
       "partial": "Some sources failed.",
       "snapshotOnly": "The historical window is not fully covered.",
-      "empty": "No news data available."
+      "empty": "No news data available.",
+      "providerFailure": "{provider}: {status}",
+      "status": {
+        "timeout": "timed out",
+        "rate_limited": "rate limited",
+        "upstream_error": "upstream error",
+        "unsupported": "unsupported scope"
+      }
     },
     "context": {
       "viewing": "Viewing",

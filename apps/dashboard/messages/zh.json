@@ -476,7 +476,14 @@
     "marketNews": {
       "partial": "部分来源失败。",
       "snapshotOnly": "历史窗口覆盖不完整。",
-      "empty": "暂无可用新闻数据。"
+      "empty": "暂无可用新闻数据。",
+      "providerFailure": "{provider}：{status}",
+      "status": {
+        "timeout": "请求超时",
+        "rate_limited": "触发限流",
+        "upstream_error": "上游错误",
+        "unsupported": "不支持该范围"
+      }
     },
     "context": {
       "viewing": "正在看",
