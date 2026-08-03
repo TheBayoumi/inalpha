@@ -83,8 +83,9 @@ class YahooNewsProvider:
         try:
             raw = await yfinance_conn.get_connector().fetch_news(query.symbol, limit=query.limit)
         except Exception as exc:
+            status = "rate_limited" if "rate limit" in str(exc).casefold() else "upstream_error"
             return ProviderResult(
-                self.name, "upstream_error", fetched_at=fetched_at, error=str(exc)
+                self.name, status, fetched_at=fetched_at, error=str(exc)
             )
         items = _items(raw, query, fetched_at, "media", "yfinance", "aggregator")
         return ProviderResult(

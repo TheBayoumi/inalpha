@@ -7,6 +7,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -15,6 +16,16 @@ from .base import ProviderResult
 from .hkex_parser import parse_rows
 
 _BASE_URL = "https://www1.hkexnews.hk"
+_HONG_KONG_TZ = ZoneInfo("Asia/Hong_Kong")
+
+
+def _requested_languages(language: str | None) -> tuple[str, ...]:
+    """把查询语言映射到 HKEX 搜索端点；未指定时同时取中英文。"""
+    if language in {"en", "en-HK"}:
+        return ("en",)
+    if language in {"zh", "zh-HK"}:
+        return ("zh",)
+    return ("en", "zh")
 
 
 class HkexNewsProvider:
@@ -46,10 +57,17 @@ class HkexNewsProvider:
             stock_id = await self._resolve_stock_id(symbol)
             if stock_id is None:
                 return ProviderResult(self.name, "no_results", fetched_at=fetched_at)
-            english, chinese = await asyncio.gather(
-                self._search("en", stock_id, query), self._search("zh", stock_id, query)
+            rows = await asyncio.gather(
+                *(
+                    self._search(language, stock_id, query)
+                    for language in _requested_languages(query.language)
+                )
             )
-            items = parse_rows([*chinese, *english], query, fetched_at)
+            items = parse_rows(
+                [row for language_rows in reversed(rows) for row in language_rows],
+                query,
+                fetched_at,
+            )
             return ProviderResult(
                 self.name,
                 "ok" if items else "no_results",
@@ -75,8 +93,11 @@ class HkexNewsProvider:
         response = await self._client.get(
             f"{_BASE_URL}/search/prefix.do",
             params={
-                "callback": "callback", "lang": "EN", "type": "A",
-                "name": symbol, "market": "SEHK",
+                "callback": "callback",
+                "lang": "EN",
+                "type": "A",
+                "name": symbol,
+                "market": "SEHK",
             },
         )
         response.raise_for_status()
@@ -95,11 +116,19 @@ class HkexNewsProvider:
     ) -> list[dict[str, Any]]:
         end = query.as_of or datetime.now(UTC)
         start = query.since or end - timedelta(days=365)
+        local_start = start.astimezone(_HONG_KONG_TZ)
+        local_end = end.astimezone(_HONG_KONG_TZ)
         params = {
-            "lang": language, "sortDir": "0", "sortByOptions": "DateTime",
-            "category": "0", "market": "SEHK", "stockId": stock_id,
-            "documentType": "-1", "fromDate": start.strftime("%Y%m%d"),
-            "toDate": end.strftime("%Y%m%d"), "title": "",
+            "lang": language,
+            "sortDir": "0",
+            "sortByOptions": "DateTime",
+            "category": "0",
+            "market": "SEHK",
+            "stockId": stock_id,
+            "documentType": "-1",
+            "fromDate": local_start.strftime("%Y%m%d"),
+            "toDate": local_end.strftime("%Y%m%d"),
+            "title": "",
         }
         response = await self._client.get(
             f"{_BASE_URL}/search/titleSearchServlet.do?{urlencode(params)}"

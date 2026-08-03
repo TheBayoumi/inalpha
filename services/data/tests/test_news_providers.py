@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 
 from inalpha_data.connectors.news.dedupe import filter_and_dedupe
 from inalpha_data.connectors.news.feed_models import FeedDefinition
+from inalpha_data.connectors.news.hkex import HkexNewsProvider
 from inalpha_data.connectors.news.hkex_parser import parse_rows
+from inalpha_data.connectors.news.legacy import YahooNewsProvider
 from inalpha_data.connectors.news.rss import RssFeedProvider
 from inalpha_data.connectors.news.sec_parser import parse_submissions
 from inalpha_data.news_models import NewsItem, NewsQuery
@@ -50,6 +53,62 @@ def test_hkex_rows_dedupe_languages_and_convert_timezone() -> None:
     assert items[0].published_at == datetime(2026, 7, 28, 10, 30, tzinfo=UTC)
 
 
+async def test_hkex_provider_respects_language_and_hong_kong_date_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HKEX 只查目标语言，并按香港自然日构造 PIT 查询窗口。"""
+    seen_languages: list[str] = []
+    seen_params: dict[str, list[str]] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_params
+        if request.url.path.endswith("/search/prefix.do"):
+            return httpx.Response(
+                200,
+                text='callback({"stockInfo":[{"code":"700","stockId":"42"}]});',
+            )
+        seen_params = parse_qs(urlsplit(str(request.url)).query)
+        seen_languages.append(seen_params["lang"][0])
+        return httpx.Response(200, json={"result": "[]"})
+
+    provider = HkexNewsProvider(timeout_s=1)
+    await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await provider.fetch(
+            NewsQuery(
+                market="hk",
+                symbol="0700.HK",
+                language="en",
+                since="2026-07-29T17:00:00Z",
+                as_of="2026-07-29T18:00:00Z",
+            )
+        )
+    finally:
+        await provider.close()
+
+    assert result.status == "no_results"
+    assert seen_languages == ["en"]
+    assert seen_params["fromDate"] == ["20260730"]
+    assert seen_params["toDate"] == ["20260730"]
+
+
+async def test_yahoo_provider_classifies_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Yahoo 限流需保留机器可读状态，不能退化成普通上游错误。"""
+    class FakeConnector:
+        async def fetch_news(self, symbol: str, limit: int = 20) -> list[dict[str, object]]:
+            raise RuntimeError("Yahoo Finance rate limit exceeded")
+
+    monkeypatch.setattr(
+        "inalpha_data.connectors.news.legacy.yfinance_conn.get_connector",
+        lambda: FakeConnector(),
+    )
+    result = await YahooNewsProvider().fetch(NewsQuery(market="us", symbol="AAPL"))
+    assert result.status == "rate_limited"
+
+
 async def test_rss_provider_reuses_cached_items_on_304() -> None:
     feed = FeedDefinition("test", "Test Feed", "https://feed.test/rss", "professional_media", "en")
     provider = RssFeedProvider(feed, timeout_s=1)
@@ -79,6 +138,34 @@ async def test_rss_provider_reuses_cached_items_on_304() -> None:
     assert first.status == second.status == "ok"
     assert first.items[0].source_name == "test"
     assert second.items[0].title == "T"
+
+
+def test_dedupe_prefers_url_across_provider_source_ids() -> None:
+    """同一 canonical URL 跨 provider 应合并，即使各自 source_id 不同。"""
+    query = NewsQuery(market="us", symbol="AAPL")
+    ts = datetime(2026, 7, 28, tzinfo=UTC)
+    wire = NewsItem(
+        title="Event",
+        link="https://x.test/a?utm_source=wire",
+        published_at=ts,
+        source_id="wire-1",
+        source_name="wire",
+        source_tier="professional_media",
+    )
+    aggregator = NewsItem(
+        title="Event copy",
+        link="https://x.test/a",
+        published_at=ts,
+        source_id="agg-9",
+        source_name="aggregator",
+        source_tier="aggregator",
+    )
+
+    result = filter_and_dedupe([aggregator, wire], query)
+
+    assert len(result) == 1
+    assert result[0].source_name == "wire"
+    assert "aggregator" in result[0].alternative_sources
 
 
 def test_dedupe_prefers_official_source_without_mutating_inputs() -> None:

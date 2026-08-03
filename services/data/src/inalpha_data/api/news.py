@@ -45,6 +45,12 @@ async def get_news(
     if query.venue and query.symbol:
         venue, symbol = canonicalize_market_identity(query.venue, query.symbol)
         query = query.model_copy(update={"venue": venue, "symbol": symbol})
+    if query.market and query.venue in {"baostock", "akshare"} and query.market != "cn":
+        raise ValidationError(
+            f"news venue {query.venue!r} conflicts with market {query.market!r}",
+            code="NEWS_MARKET_VENUE_CONFLICT",
+            details={"market": query.market, "venue": query.venue, "expected_market": "cn"},
+        )
     if not query.market and query.venue not in _SUPPORTED_LEGACY_VENUES:
         raise ValidationError(
             f"news venue {query.venue!r} not supported",

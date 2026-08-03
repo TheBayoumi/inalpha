@@ -62,11 +62,11 @@ def _visible(item: NewsItem, query: NewsQuery) -> bool:
 
 
 def _event_key(item: NewsItem) -> str:
-    if item.source_id:
-        return f"id:{item.source_name}:{item.source_id}"
     url = canonical_url(item.link)
     if url:
         return f"url:{url}"
+    if item.source_id:
+        return f"id:{item.source_name}:{item.source_id}"
     title = re.sub(r"\W+", "", item.title.casefold())
     bucket = item.published_at.strftime("%Y%m%d%H") if item.published_at else "unknown"
     return f"title:{title}:{bucket}"

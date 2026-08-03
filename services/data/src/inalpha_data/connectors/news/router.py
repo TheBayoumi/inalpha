@@ -48,7 +48,7 @@ class NewsRouter:
     def _select(self, query: NewsQuery) -> list[NewsProvider]:
         """按市场初选来源，再按 provider capability 排除无覆盖组合。"""
         names: set[str]
-        if query.market == "cn" or query.venue in {"baostock", "akshare"}:
+        if query.market == "cn":
             names = {"eastmoney"}
         elif query.market in {"us", "hk"} and query.symbol:
             wants_disclosures = not query.kinds or "disclosure" in query.kinds
@@ -61,6 +61,8 @@ class NewsRouter:
             names = {"yfinance_market_proxy"}
         elif query.market == "crypto":
             names = {"rss"}
+        elif query.venue in {"baostock", "akshare"}:
+            names = {"eastmoney"}
         elif query.venue == "yfinance" or query.symbol:
             names = {"yfinance"}
         else:
