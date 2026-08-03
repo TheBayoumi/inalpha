@@ -276,6 +276,19 @@ def test_global_stock_news_uses_symbol_not_market_proxy(
     assert r.json()["providers"][0]["provider"] == "yfinance"
 
 
+def test_news_rejects_conflicting_market_and_a_share_venue(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """显式市场不得与 A 股 venue 冲突，避免跨市场证据被错标。"""
+    r = client.get(
+        "/news",
+        headers=auth_headers,
+        params={"market": "us", "venue": "baostock", "symbol": "sh.600519"},
+    )
+    assert r.status_code == 400
+    assert r.json()["code"] == "NEWS_MARKET_VENUE_CONFLICT"
+
+
 async def test_cn_provider_preserves_failure_and_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
