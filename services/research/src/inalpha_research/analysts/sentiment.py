@@ -33,6 +33,9 @@ _logger = get_logger(__name__)
 _FNG_URL = "https://api.alternative.me/fng/"
 _FETCH_TIMEOUT_S = 10.0
 _DEFAULT_LIMIT = 30
+_PROVIDER_STATUSES = frozenset(
+    {"ok", "no_results", "timeout", "rate_limited", "upstream_error", "unsupported"}
+)
 
 _SYSTEM = """
 You are a sentiment analyst covering any asset class.
@@ -98,6 +101,7 @@ class SentimentAnalyst(Analyst):
         as_of: datetime,
         lookback_days: int,
     ) -> str:
+        self._confidence_cap = None
         market_type = infer_asset_type(venue=venue, symbol=symbol)
         news_market = {
             "crypto": "crypto",
@@ -162,19 +166,29 @@ class SentimentAnalyst(Analyst):
             limit=8,
         )
         news = news_result.get("items", [])
-        provider_status = news_result.get("providers", [])
+        provider_status = _provider_status_summary(news_result.get("providers"))
         web_news = await self._data.get_web_search(
             f"{symbol} stock news sentiment analysis", max_results=5
         )
-        partial_note = " structured sources partial" if news_result.get("is_partial") else ""
+        structured_failure = bool(
+            news_result.get("is_partial")
+            or news_result.get("error")
+            or any(
+                status in {"timeout", "rate_limited", "upstream_error"}
+                for status in provider_status
+            )
+        )
+        self._confidence_cap = 0.7 if (news or web_news) else 0.5
+        partial_note = "; structured sources unavailable or partial" if structured_failure else ""
         return _format_user_prompt_llm_only(
             symbol=symbol,
             as_of=as_of,
             market_type=market_type,
             fng_note=(
                 f"(non-crypto market — no Fear & Greed; {len(news)} structured headlines, "
-                f"{len(web_news)} web results; providers={provider_status}{partial_note})"
-                if news or web_news or provider_status
+                f"{len(web_news)} web results; provider_status_counts={provider_status}"
+                f"{partial_note})"
+                if news or web_news or provider_status or structured_failure
                 else "(non-crypto market — no Fear & Greed; all sources returned empty)"
             ),
             news=news,
@@ -261,6 +275,21 @@ def _format_user_prompt_llm_only(
         f"When all data blocks are empty, fall back to training knowledge with **lower confidence**.\n\n"
         f"Output the required JSON only."
     )
+
+
+def _provider_status_summary(providers: Any) -> dict[str, int]:
+    """仅保留内部状态枚举和计数，避免把上游错误文本拼进提示词。"""
+    summary: dict[str, int] = {}
+    if not isinstance(providers, list):
+        return summary
+    for provider in providers:
+        if not isinstance(provider, dict):
+            continue
+        status = provider.get("status")
+        if status not in _PROVIDER_STATUSES:
+            continue
+        summary[status] = summary.get(status, 0) + 1
+    return summary
 
 
 def _render_news_block(news: list[dict[str, Any]]) -> str:
