@@ -16,6 +16,15 @@ _SUPPORTED_MARKETS = {
     "au", "br", "ca", "cn", "crypto", "de", "fr", "global", "hk", "in", "jp", "kr", "uk", "us"
 }
 _SUPPORTED_LEGACY_VENUES = {"yfinance", "baostock", "akshare"}
+_MARKET_VENUES = {
+    "cn": {"baostock", "akshare"},
+    "crypto": {"binance"},
+    "us": {"alpaca", "yfinance"},
+    **{
+        market: {"yfinance"}
+        for market in _SUPPORTED_MARKETS - {"cn", "crypto", "us"}
+    },
+}
 
 
 class NewsScopeNotSupportedError(InalphaError):
@@ -45,12 +54,18 @@ async def get_news(
     if query.venue and query.symbol:
         venue, symbol = canonicalize_market_identity(query.venue, query.symbol)
         query = query.model_copy(update={"venue": venue, "symbol": symbol})
-    if query.market and query.venue in {"baostock", "akshare"} and query.market != "cn":
-        raise ValidationError(
-            f"news venue {query.venue!r} conflicts with market {query.market!r}",
-            code="NEWS_MARKET_VENUE_CONFLICT",
-            details={"market": query.market, "venue": query.venue, "expected_market": "cn"},
-        )
+    if query.market and query.venue:
+        allowed_venues = _MARKET_VENUES[query.market]
+        if query.venue not in allowed_venues:
+            raise ValidationError(
+                f"news venue {query.venue!r} conflicts with market {query.market!r}",
+                code="NEWS_MARKET_VENUE_CONFLICT",
+                details={
+                    "market": query.market,
+                    "venue": query.venue,
+                    "allowed_venues": sorted(allowed_venues),
+                },
+            )
     if not query.market and query.venue not in _SUPPORTED_LEGACY_VENUES:
         raise ValidationError(
             f"news venue {query.venue!r} not supported",
