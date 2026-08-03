@@ -38,10 +38,11 @@ interface MarketNewsPayload {
   providers?: NewsProviderStatus[];
   is_partial?: boolean;
   coverage_complete?: boolean;
+  error?: string;
 }
 
 export function isMarketNews(v: unknown): v is MarketNewsPayload {
-  if (!isObj(v) || !Array.isArray(v.items)) return false;
+  if (!isObj(v) || typeof v.error === "string" || !Array.isArray(v.items)) return false;
   const hasNewsState =
     Array.isArray(v.providers) ||
     typeof v.is_partial === "boolean" ||
@@ -52,11 +53,18 @@ export function isMarketNews(v: unknown): v is MarketNewsPayload {
 
 const NEWS_CAP = 8;
 
+const NEWS_PROVIDER_FAILURES = new Set([
+  "timeout",
+  "rate_limited",
+  "upstream_error",
+  "unsupported",
+]);
+
 export function MarketNewsView({ v }: { v: MarketNewsPayload }) {
   const t = useTranslations("chat.marketNews");
   const items = v.items.slice(0, NEWS_CAP);
-  const unavailable = (v.providers ?? []).filter(
-    (provider) => !["ok", "no_results"].includes(provider.status),
+  const unavailable = (v.providers ?? []).filter((provider) =>
+    NEWS_PROVIDER_FAILURES.has(provider.status),
   );
   return (
     <div className="flex flex-col">
@@ -64,7 +72,15 @@ export function MarketNewsView({ v }: { v: MarketNewsPayload }) {
         <div className="mb-1.5 rounded-sm border border-gold/30 bg-gold/5 px-2 py-1 font-mono text-[9px] leading-relaxed text-gold/90">
           {v.is_partial && t("partial")}
           {v.coverage_complete === false && ` ${t("snapshotOnly")}`}
-          {unavailable.length > 0 && ` ${unavailable.map((p) => `${p.provider}:${p.status}`).join(" · ")}`}
+          {unavailable.length > 0 &&
+            ` ${unavailable
+              .map((provider) =>
+                t("providerFailure", {
+                  provider: provider.provider,
+                  status: t(`status.${provider.status}`),
+                }),
+              )
+              .join(" · ")}`}
         </div>
       )}
       {items.length === 0 && (
