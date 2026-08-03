@@ -229,8 +229,11 @@ class MacroAnalyst(Analyst):
             _fetch_macro_readings(self._data, as_of=as_of),
         )
         macro_news = macro_news_result.get("items", [])
-        # 双档 cap（run() 里代码级 clamp）：有任一 live 数据 0.7，全无 0.5
-        self._confidence_cap = 0.7 if (readings or macro_news) else 0.5
+        news_coverage_complete = macro_news_result.get("coverage_complete", True)
+        # 双档 cap（run() 里代码级 clamp）：完整 live 数据 0.7；仅快照新闻或全无 0.5。
+        self._confidence_cap = (
+            0.7 if readings or (macro_news and news_coverage_complete) else 0.5
+        )
         return _format_user_prompt(
             venue=venue,
             symbol=symbol,
@@ -238,6 +241,7 @@ class MacroAnalyst(Analyst):
             events=events,
             market_type=market_type,
             macro_news=macro_news,
+            news_coverage_complete=news_coverage_complete,
             readings=readings,
         )
 
@@ -405,6 +409,7 @@ def _format_user_prompt(
     events: list[dict[str, Any]],
     market_type: str,
     macro_news: list[dict[str, Any]],
+    news_coverage_complete: bool = True,
     readings: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     # 按 as_of 把事件拆成 past / upcoming —— 避免 LLM 把 14 天前已发生的 CPI 说成"即将"
@@ -461,6 +466,12 @@ def _format_user_prompt(
         news_block = (
             "live_macro_news: (none available — restrict yourself to calendar + caveats, "
             "do NOT invent specific event outcomes)"
+        )
+
+    if not news_coverage_complete:
+        news_block += (
+            "\nnews_coverage_note: provider snapshot does not fully cover the requested "
+            "historical window; absence of headlines is NOT evidence that no event occurred."
         )
 
     readings_block = _format_macro_readings(readings or {})
