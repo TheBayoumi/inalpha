@@ -142,7 +142,7 @@ def test_market_proxy_preserves_yahoo_failure(
     body = r.json()
     assert body["items"] == []
     assert body["is_partial"] is True
-    assert body["providers"][0]["status"] == "upstream_error"
+    assert body["providers"][0]["status"] == "rate_limited"
     assert "rate limited" in body["providers"][0]["error"]
 
 
