@@ -87,7 +87,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 RssFeedProvider(feed, timeout_s=_settings.news_timeout_s)
                 for feed in DEFAULT_CRYPTO_FEEDS
             ],
-        ]
+        ],
+        timeout_s=_settings.news_timeout_s,
     )
     web_fetch_conn.init_connector()
     symbol_search_conn.init_connector()
