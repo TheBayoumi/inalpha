@@ -14,6 +14,7 @@ from inalpha_data.connectors.news.hkex_parser import parse_rows
 from inalpha_data.connectors.news.legacy import YahooNewsProvider
 from inalpha_data.connectors.news.market_proxy import YahooMarketNewsProvider
 from inalpha_data.connectors.news.rss import RssFeedProvider
+from inalpha_data.connectors.news.sec import SecNewsProvider
 from inalpha_data.connectors.news.sec_parser import parse_submissions
 from inalpha_data.news_models import NewsItem, NewsQuery
 
@@ -92,6 +93,42 @@ async def test_hkex_provider_respects_language_and_hong_kong_date_window(
     assert seen_languages == ["en"]
     assert seen_params["fromDate"] == ["20260730"]
     assert seen_params["toDate"] == ["20260730"]
+
+
+async def test_hkex_preserves_success_when_one_language_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """双语查询一端超时时仍保留另一端成功公告。"""
+    provider = HkexNewsProvider(timeout_s=1)
+
+    async def resolve(symbol: str) -> str:
+        return "42"
+
+    async def search(language: str, stock_id: str, query: NewsQuery):
+        if language == "en":
+            raise httpx.TimeoutException("timeout")
+        return [{"NEWS_ID": "1", "TITLE": "全年業績", "DATE_TIME": "28/07/2026 18:30",
+                 "FILE_LINK": "/listedco/listconews/sehk/2026/1c.pdf", "_language": "zh-HK"}]
+
+    monkeypatch.setattr(provider, "_resolve_stock_id", resolve)
+    monkeypatch.setattr(provider, "_search", search)
+    try:
+        result = await provider.fetch(NewsQuery(market="hk", symbol="0700.HK"))
+    finally:
+        await provider.close()
+    assert result.status == "timeout"
+    assert [item.title for item in result.items] == ["全年業績"]
+
+
+async def test_sec_resolves_share_class_before_market_suffix() -> None:
+    """SEC 应先识别 BRK.B 份额类别，再兼容 AAPL.US 市场后缀。"""
+    provider = SecNewsProvider(user_agent="test test@example.com", timeout_s=1, min_interval_s=0)
+    provider._ticker_map = {"BRK-B": "0001067983", "BRK": "0000000001", "AAPL": "0000320193"}
+    try:
+        assert await provider._resolve_cik("BRK.B") == "0001067983"
+        assert await provider._resolve_cik("AAPL.US") == "0000320193"
+    finally:
+        await provider.close()
 
 
 @pytest.mark.parametrize(
@@ -176,6 +213,21 @@ def test_dedupe_prefers_url_across_provider_source_ids() -> None:
     assert len(result) == 1
     assert result[0].source_name == "wire"
     assert "aggregator" in result[0].alternative_sources
+
+
+def test_realtime_query_rejects_future_items() -> None:
+    """实时查询也应以抓取时点为上界。"""
+    fetched_at = datetime(2026, 7, 28, 12, tzinfo=UTC)
+    items = [
+        NewsItem(title="visible", published_at=fetched_at, source_name="wire",
+                 source_tier="professional_media"),
+        NewsItem(title="future", published_at=datetime(2026, 7, 29, tzinfo=UTC),
+                 source_name="wire", source_tier="professional_media"),
+    ]
+    result = filter_and_dedupe(
+        items, NewsQuery(market="us", symbol="AAPL"), fetched_at=fetched_at
+    )
+    assert [item.title for item in result] == ["visible"]
 
 
 def test_dedupe_prefers_official_source_without_mutating_inputs() -> None:

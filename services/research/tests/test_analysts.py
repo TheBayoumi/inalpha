@@ -41,6 +41,15 @@ async def test_news_client_propagates_request_errors(data_client: DataClient) ->
     assert caught.value.status_code == 422
 
 
+@respx.mock
+async def test_news_client_marks_5xx_coverage_incomplete(data_client: DataClient) -> None:
+    """请求级降级不得声称历史覆盖完整。"""
+    respx.get("http://data-mock.test/news").mock(return_value=Response(503, json={}))
+    result = await data_client.get_news(market="us", symbol="AAPL")
+    assert result["is_partial"] is True
+    assert result["coverage_complete"] is False
+
+
 # ────────────────────────────────────────────────────────────────────
 # Technical
 # ────────────────────────────────────────────────────────────────────
@@ -433,6 +442,54 @@ async def test_sentiment_web_search_year_follows_as_of(data_client: DataClient) 
     query = web_route.calls.last.request.url.params["query"]
     assert "2031" in query
     assert "2026" not in query  # 修复前的硬编码年份
+
+
+@respx.mock
+async def test_historical_sentiment_filters_future_fng_and_disables_web(
+    data_client: DataClient,
+) -> None:
+    """历史研究排除 as_of 后的 FNG，且不使用无时间戳 Web 结果。"""
+    as_of = datetime(2024, 5, 20, 12, tzinfo=UTC)
+    respx.get("https://api.alternative.me/fng/").mock(return_value=Response(200, json={"data": [
+        {"value": "90", "value_classification": "Greed",
+         "timestamp": str(int((as_of + timedelta(days=1)).timestamp()))},
+        {"value": "22", "value_classification": "Fear",
+         "timestamp": str(int((as_of - timedelta(days=1)).timestamp()))},
+    ]}))
+    web_route = respx.get("http://data-mock.test/web/search").mock(
+        return_value=Response(200, json={"results": [{"title": "future"}]})
+    )
+    llm = FakeLLMClient({"sentiment analyst": {
+        "stance": "neutral", "confidence": 0.4, "summary": "pit"
+    }})
+    analyst = SentimentAnalyst(llm=llm, data=data_client)
+    await analyst.run(venue="binance", symbol="BTC/USDT", timeframe="1h",
+                      as_of=as_of, lookback_days=7)
+    prompt = llm.calls[0]["user"]
+    assert "latest_value: 22" in prompt
+    assert "latest_value: 90" not in prompt
+    assert not web_route.called
+
+
+@respx.mock
+async def test_historical_non_crypto_sentiment_disables_undated_web(
+    data_client: DataClient,
+) -> None:
+    """非 Crypto 历史情绪只消费有 PIT 契约的结构化新闻。"""
+    respx.get("http://data-mock.test/news").mock(
+        return_value=Response(200, json={"items": [], "coverage_complete": False})
+    )
+    web_route = respx.get("http://data-mock.test/web/search").mock(
+        return_value=Response(200, json={"results": [{"title": "future"}]})
+    )
+    llm = FakeLLMClient({"sentiment analyst": {
+        "stance": "neutral", "confidence": 0.4, "summary": "pit"
+    }})
+    analyst = SentimentAnalyst(llm=llm, data=data_client)
+    await analyst.run(venue="alpaca", symbol="AAPL", timeframe="1d",
+                      as_of=datetime(2024, 5, 20, tzinfo=UTC), lookback_days=30)
+    assert not web_route.called
+    assert "undated web search disabled for historical as_of" in llm.calls[0]["user"]
 
 
 @respx.mock
@@ -1088,7 +1145,7 @@ async def test_sentiment_non_crypto_uses_web_search(data_client: DataClient) -> 
         venue="akshare",
         symbol="sh.600519",
         timeframe="1d",
-        as_of=_as_of(),
+        as_of=datetime.now(UTC),
         lookback_days=30,
     )
 

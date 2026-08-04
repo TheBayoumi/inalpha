@@ -82,8 +82,12 @@ class SecNewsProvider:
                 for value in payload.values()
                 if isinstance(value, dict)
             }
-        ticker = symbol.split(".", 1)[0].upper()
-        return self._ticker_map.get(ticker)
+        ticker = symbol.upper()
+        candidates = (ticker, ticker.replace(".", "-"), ticker.split(".", 1)[0])
+        return next(
+            (self._ticker_map[value] for value in candidates if value in self._ticker_map),
+            None,
+        )
 
     async def _get_json(self, url: str) -> dict[str, Any]:
         async with self._request_lock:

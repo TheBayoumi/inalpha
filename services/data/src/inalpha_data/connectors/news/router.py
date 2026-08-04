@@ -25,7 +25,7 @@ class NewsRouter:
         for provider, result in zip(selected, results, strict=True):
             result.coverage = provider.coverage
         items = filter_and_dedupe(
-            [item for result in results for item in result.items], query
+            [item for result in results for item in result.items], query, fetched_at=fetched_at
         )
         statuses = [_status(result) for result in results]
         failures = {"timeout", "rate_limited", "upstream_error"}
