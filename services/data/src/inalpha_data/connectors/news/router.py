@@ -14,14 +14,17 @@ from .market_proxy import YahooMarketNewsProvider
 class NewsRouter:
     """选择 provider，并保留部分失败与覆盖状态。"""
 
-    def __init__(self, providers: list[NewsProvider]) -> None:
+    def __init__(self, providers: list[NewsProvider], *, timeout_s: float = 15.0) -> None:
         self._providers = providers
+        self._timeout_s = timeout_s
 
     async def fetch(self, query: NewsQuery) -> NewsResponse:
         """并发调用 provider，聚合、PIT 过滤并去重。"""
         fetched_at = datetime.now(UTC)
         selected = self._select(query)
-        results = await asyncio.gather(*(provider.fetch(query) for provider in selected))
+        results = await asyncio.gather(
+            *(self._fetch_with_timeout(provider, query) for provider in selected)
+        )
         for provider, result in zip(selected, results, strict=True):
             result.coverage = provider.coverage
         items = filter_and_dedupe(
@@ -44,6 +47,20 @@ class NewsRouter:
                 or all(provider.coverage == "complete" for provider in selected)
             ),
         )
+
+    async def _fetch_with_timeout(
+        self, provider: NewsProvider, query: NewsQuery
+    ) -> ProviderResult:
+        """给每个 provider 独立截止时间，避免单一长尾阻塞聚合。"""
+        try:
+            return await asyncio.wait_for(provider.fetch(query), timeout=self._timeout_s)
+        except TimeoutError:
+            return ProviderResult(
+                provider.name,
+                "timeout",
+                error=f"provider timed out after {self._timeout_s:g}s",
+                coverage=provider.coverage,
+            )
 
     def _select(self, query: NewsQuery) -> list[NewsProvider]:
         """按市场初选来源，再按 provider capability 排除无覆盖组合。"""
@@ -89,13 +106,16 @@ class NewsRouter:
 _router: NewsRouter | None = None
 
 
-def init_router(extra_providers: list[NewsProvider] | None = None) -> None:
+def init_router(
+    extra_providers: list[NewsProvider] | None = None, *, timeout_s: float = 15.0
+) -> None:
     """初始化模块级 router。"""
     global _router
     if _router is not None:
         raise RuntimeError("news router already initialized")
     _router = NewsRouter(
-        [CnNewsProvider(), YahooNewsProvider(), YahooMarketNewsProvider(), *(extra_providers or [])]
+        [CnNewsProvider(), YahooNewsProvider(), YahooMarketNewsProvider(), *(extra_providers or [])],
+        timeout_s=timeout_s,
     )
 
 

@@ -1,24 +1,65 @@
 """统一财经新闻层测试。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 
+from inalpha_data.connectors.news.base import ProviderResult
 from inalpha_data.connectors.news.dedupe import filter_and_dedupe
 from inalpha_data.connectors.news.feed_models import FeedDefinition
 from inalpha_data.connectors.news.hkex import HkexNewsProvider
 from inalpha_data.connectors.news.hkex_parser import parse_rows
 from inalpha_data.connectors.news.legacy import YahooNewsProvider
 from inalpha_data.connectors.news.market_proxy import YahooMarketNewsProvider
+from inalpha_data.connectors.news.router import NewsRouter
 from inalpha_data.connectors.news.rss import RssFeedProvider
 from inalpha_data.connectors.news.sec import SecNewsProvider
 from inalpha_data.connectors.news.sec_parser import parse_submissions
 from inalpha_data.news_models import NewsItem, NewsQuery
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_router_times_out_provider_without_losing_fast_results() -> None:
+    """单一长尾 provider 不得阻塞或吞掉已成功来源。"""
+    class Provider:
+        coverage = "snapshot_only"
+
+        def __init__(self, name: str, *, slow: bool = False) -> None:
+            self.name = name
+            self.slow = slow
+
+        def supports(self, query: NewsQuery) -> bool:
+            return True
+
+        async def fetch(self, query: NewsQuery):
+            if self.slow:
+                await asyncio.sleep(1)
+            return ProviderResult(
+                self.name,
+                "ok",
+                items=[NewsItem(
+                    title=self.name,
+                    published_at=datetime(2026, 7, 28, tzinfo=UTC),
+                    source_name=self.name,
+                )],
+            )
+
+        async def close(self) -> None:
+            pass
+
+    router = NewsRouter([Provider("yfinance"), Provider("us", slow=True)], timeout_s=0.01)
+    result = await router.fetch(NewsQuery(market="us", symbol="AAPL"))
+    assert [item.title for item in result.items] == ["yfinance"]
+    assert {status.provider: status.status for status in result.providers} == {
+        "yfinance": "ok",
+        "us": "timeout",
+    }
+    assert result.is_partial is True
 
 
 def test_sec_submissions_are_official_disclosures() -> None:
