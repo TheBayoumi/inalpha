@@ -178,7 +178,10 @@ class DataClient:
         try:
             r = await self._client.get("/news", params=params)
         except Exception as exc:
-            return {"items": [], "providers": [], "is_partial": True, "error": str(exc)}
+            return {
+                "items": [], "providers": [], "is_partial": True,
+                "coverage_complete": False, "error": str(exc),
+            }
         if 400 <= r.status_code < 500:
             raise DataServiceError(
                 f"news request rejected with upstream {r.status_code}",
@@ -190,14 +193,19 @@ class DataClient:
                 "items": [],
                 "providers": [],
                 "is_partial": True,
+                "coverage_complete": False,
                 "error": f"upstream {r.status_code}",
             }
         try:
             payload = r.json()
         except Exception:
-            return {"items": [], "providers": [], "is_partial": True, "error": "invalid json"}
+            return {
+                "items": [], "providers": [], "is_partial": True,
+                "coverage_complete": False, "error": "invalid json",
+            }
         return payload if isinstance(payload, dict) else {
-            "items": [], "providers": [], "is_partial": True, "error": "invalid payload"
+            "items": [], "providers": [], "is_partial": True,
+            "coverage_complete": False, "error": "invalid payload",
         }
 
     async def get_fundamentals(

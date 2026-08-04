@@ -57,17 +57,38 @@ class HkexNewsProvider:
             stock_id = await self._resolve_stock_id(symbol)
             if stock_id is None:
                 return ProviderResult(self.name, "no_results", fetched_at=fetched_at)
-            rows = await asyncio.gather(
+            results = await asyncio.gather(
                 *(
                     self._search(language, stock_id, query)
                     for language in _requested_languages(query.language)
-                )
+                ),
+                return_exceptions=True,
             )
+            failures = [result for result in results if isinstance(result, BaseException)]
+            rows = [result for result in results if isinstance(result, list)]
             items = parse_rows(
                 [row for language_rows in reversed(rows) for row in language_rows],
                 query,
                 fetched_at,
             )
+            if failures:
+                failure = failures[0]
+                status = (
+                    "timeout"
+                    if isinstance(failure, httpx.TimeoutException)
+                    else "rate_limited"
+                    if isinstance(failure, httpx.HTTPStatusError)
+                    and failure.response.status_code == 429
+                    else "upstream_error"
+                )
+                return ProviderResult(
+                    self.name,
+                    status,
+                    fetched_at=fetched_at,
+                    items=items,
+                    error="; ".join(str(value) for value in failures),
+                    coverage=self.coverage,
+                )
             return ProviderResult(
                 self.name,
                 "ok" if items else "no_results",

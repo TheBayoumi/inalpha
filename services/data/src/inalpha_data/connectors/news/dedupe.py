@@ -11,9 +11,11 @@ _TRACKING_KEYS = {"gclid", "fbclid", "ref", "source"}
 _TIER_WEIGHT = {"official": 3, "professional_media": 2, "aggregator": 1}
 
 
-def filter_and_dedupe(items: list[NewsItem], query: NewsQuery) -> list[NewsItem]:
+def filter_and_dedupe(
+    items: list[NewsItem], query: NewsQuery, *, fetched_at: datetime | None = None
+) -> list[NewsItem]:
     """按时间窗、类型过滤并跨 provider 去重。"""
-    filtered = [item for item in items if _visible(item, query)]
+    filtered = [item for item in items if _visible(item, query, fetched_at)]
     winners: dict[str, NewsItem] = {}
     for item in filtered:
         key = _event_key(item)
@@ -50,12 +52,12 @@ def canonical_url(url: str) -> str:
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, urlencode(query), ""))
 
 
-def _visible(item: NewsItem, query: NewsQuery) -> bool:
+def _visible(item: NewsItem, query: NewsQuery, fetched_at: datetime | None) -> bool:
     if query.kinds and item.kind not in query.kinds:
         return False
-    if query.as_of:
-        if item.published_at is None or item.published_at > query.as_of:
-            return False
+    upper_bound = query.as_of or fetched_at
+    if upper_bound and (item.published_at is None or item.published_at > upper_bound):
+        return False
     if query.since and (item.published_at is None or item.published_at < query.since):
         return False
     return True

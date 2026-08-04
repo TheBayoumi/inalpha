@@ -18,7 +18,7 @@ D-9 起：
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -124,7 +124,9 @@ class SentimentAnalyst(Analyst):
             provider_status = _provider_status_summary(news_result.get("providers"))
             structured_failure = _has_structured_failure(news_result, provider_status)
             try:
-                entries = await _fetch_fng(limit=_DEFAULT_LIMIT)
+                entries = _filter_fng_as_of(
+                    await _fetch_fng(limit=_DEFAULT_LIMIT), as_of
+                )
             except Exception as exc:
                 # 不静默吞:FNG 挂了(超时/4xx/5xx/坏 JSON)要留痕,否则运维看不到;
                 # 仍回落 web 搜索(下方 if not entries),不阻断研究。
@@ -132,9 +134,8 @@ class SentimentAnalyst(Analyst):
                 entries = []
 
             if not entries:
-                # Fallback: web search for crypto sentiment when FNG is unavailable
-                # 年份取 as_of 动态拼（issue #63）：硬编码跨年后=向搜索引擎要过时年份当现在
-                web_results = await self._data.get_web_search(
+                historical_query = _is_historical_query(as_of)
+                web_results = [] if historical_query else await self._data.get_web_search(
                     f"{symbol} crypto market sentiment fear greed {as_of.year}",
                     max_results=5,
                 )
@@ -146,7 +147,8 @@ class SentimentAnalyst(Analyst):
                     as_of=as_of,
                     market_type=market_type,
                     fng_note=(
-                        "(Fear & Greed API unavailable — using web search; "
+                        "(Fear & Greed evidence unavailable"
+                        f"{' for historical as_of; undated web search disabled' if historical_query else ' — using web search'}; "
                         f"provider_status_counts={provider_status}"
                         f"{'; structured news unavailable or partial' if structured_failure else ''}"
                         f"{'; historical news coverage is snapshot-only' if not coverage_complete else ''})"
@@ -180,7 +182,8 @@ class SentimentAnalyst(Analyst):
         news = news_result.get("items", [])
         provider_status = _provider_status_summary(news_result.get("providers"))
         coverage_complete = news_result.get("coverage_complete", True)
-        web_news = await self._data.get_web_search(
+        historical_query = _is_historical_query(as_of)
+        web_news = [] if historical_query else await self._data.get_web_search(
             f"{symbol} stock news sentiment analysis", max_results=5
         )
         structured_failure = _has_structured_failure(news_result, provider_status)
@@ -189,6 +192,7 @@ class SentimentAnalyst(Analyst):
         )
         partial_note = "; structured sources unavailable or partial" if structured_failure else ""
         coverage_note = "; historical news coverage is snapshot-only" if not coverage_complete else ""
+        web_note = "; undated web search disabled for historical as_of" if historical_query else ""
         return _format_user_prompt_llm_only(
             symbol=symbol,
             as_of=as_of,
@@ -196,7 +200,7 @@ class SentimentAnalyst(Analyst):
             fng_note=(
                 f"(non-crypto market — no Fear & Greed; {len(news)} structured headlines, "
                 f"{len(web_news)} web results; provider_status_counts={provider_status}"
-                f"{partial_note}{coverage_note})"
+                f"{partial_note}{coverage_note}{web_note})"
                 if news or web_news or provider_status or structured_failure or not coverage_complete
                 else "(non-crypto market — no Fear & Greed; all sources returned empty)"
             ),
@@ -215,6 +219,26 @@ async def _fetch_fng(*, limit: int) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         raise RuntimeError(f"unexpected Fear & Greed payload shape: {type(payload).__name__}")
     return data
+
+
+def _filter_fng_as_of(entries: list[dict[str, Any]], as_of: datetime) -> list[dict[str, Any]]:
+    """仅保留研究时点已发布的 FNG 读数。"""
+    cutoff = as_of if as_of.tzinfo else as_of.replace(tzinfo=UTC)
+    visible = []
+    for entry in entries:
+        try:
+            published_at = datetime.fromtimestamp(int(entry["timestamp"]), tz=UTC)
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if published_at <= cutoff:
+            visible.append(entry)
+    return visible
+
+
+def _is_historical_query(as_of: datetime) -> bool:
+    """历史研究禁用缺少可信发布时间的 Web 证据。"""
+    cutoff = as_of if as_of.tzinfo else as_of.replace(tzinfo=UTC)
+    return cutoff < datetime.now(UTC) - timedelta(days=1)
 
 
 def _summarize_trend(values: list[int]) -> dict[str, Any]:
