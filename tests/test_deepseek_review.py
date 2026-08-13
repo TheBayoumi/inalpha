@@ -39,6 +39,11 @@ class _FakeResponse:
         ).encode()
 
 
+class _IncompleteResponse(_FakeResponse):
+    def read(self) -> bytes:
+        raise http.client.IncompleteRead(b"{}")
+
+
 class DeepSeekReviewTest(unittest.TestCase):
     def test_defaults_target_deepseek_v4_pro(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -89,7 +94,7 @@ class DeepSeekReviewTest(unittest.TestCase):
         with patch.object(
             module.urllib.request,
             "urlopen",
-            side_effect=[http.client.IncompleteRead(b"{}"), _FakeResponse("最终 review")],
+            side_effect=[_IncompleteResponse(), _FakeResponse("最终 review")],
         ) as urlopen:
             result = module._call_deepseek(
                 "secret-value", "PR title", "diff body", "project rules"
