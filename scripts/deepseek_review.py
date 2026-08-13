@@ -26,6 +26,7 @@ import urllib.request
 
 DIFF_PATH = "/tmp/pr_diff.txt"
 TITLE_PATH = "/tmp/pr_title.txt"
+RULES_PATH = "CLAUDE.md"
 OUT_PATH = "/tmp/review_body.txt"
 
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -37,19 +38,20 @@ SYSTEM_PROMPT = """\
 你是这个仓库的资深 reviewer。目标：在合并前尽量拦住真正的 bug、设计缺陷、架构失误。
 **不要只对着固定清单打勾**——清单覆盖不到新功能。要先理解再评审。
 
-## Step 1 · 读项目规则（每次都重新读，规则会随项目迭代而变）
+## Step 1 · 读项目规则（每次都重新注入，规则会随项目迭代而变）
 
-- 用 Read 读仓库根 `CLAUDE.md`；改动目录附近若有 `AGENTS.md` / 相关 `docs/` / ADR 也读。
-- 把里面的硬约束当成本次 review 的**项目专属规则**——
-  CLAUDE.md 更新了，你的评审标准就自动跟着更新，**无需改这个 workflow**。
-- 这是项目规则的唯一权威来源；下面 Step 4 的清单只是提示，以你读到的为准。
+- 用户消息中的“项目规则”就是仓库根 `CLAUDE.md` 的完整内容，把其中硬约束当作
+  本次 review 的项目专属标准。
+- 当前环境没有 Read / Grep / Glob 或其它工具。不要尝试调用工具，也不要输出工具调用协议；
+  只能基于项目规则、PR 标题和完整 diff 评审。
+- 规则更新后会由脚本自动重新注入，无需修改这个 workflow。
 
 ## Step 2 · 重建意图 + 圈定影响面
 
 - 先一句话说清这个 PR 想做什么。
-- 用 Read / Grep / Glob 看 diff **以外**的代码：改动的函数 / 接口 / 契约有哪些调用方？
-  碰了哪些模块边界（Inalpha 是 Next.js → Mastra(TS) → Python services 三层）？
-- 只有理解了"改动如何与系统其余部分交互"，才谈得上架构评审。
+- 只基于给定完整 diff 重建调用关系和模块边界。看不到 diff 外实现时，不要假装已经读取，
+  也不要输出工具请求；仅报告能由现有证据支持的问题。
+- 只有理解了改动如何与系统其余部分交互，才提出架构 finding。
 
 ## Step 3 · 通用工程评审（适用任何功能，新增功能也自动覆盖）
 
@@ -95,16 +97,31 @@ def _fail(msg: str) -> None:
     sys.exit(0)
 
 
-def _call_deepseek(api_key: str, title: str, diff: str) -> str:
-    """调用 DeepSeek；正常响应却无正文时重试一次，禁止发布空 review。"""
+def _is_valid_review(content: object) -> bool:
+    """只接受非空自然语言正文，拒绝模型泄漏的工具调用协议。"""
+    if not isinstance(content, str) or not content.strip():
+        return False
+    protocol_markers = ("<｜｜DSML｜｜tool_calls>", "<tool_call>", '"tool_calls"')
+    return not any(marker in content for marker in protocol_markers)
+
+
+def _call_deepseek(api_key: str, title: str, diff: str, rules: str) -> str:
+    """调用 DeepSeek；空正文或工具协议泄漏时重试一次。"""
     payload = {
         "model": MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"## PR 标题\n{title}\n\n## Diff\n{diff}"},
+            {
+                "role": "user",
+                "content": (
+                    f"## 项目规则（CLAUDE.md）\n{rules}\n\n"
+                    f"## PR 标题\n{title}\n\n## Diff\n{diff}"
+                ),
+            },
         ],
         "temperature": 0.1,
-        "max_tokens": 4096,
+        # V4 Pro 会把 reasoning tokens 计入 completion；4096 会在输出正文前耗尽。
+        "max_tokens": 16384,
     }
     for attempt in range(MAX_ATTEMPTS):
         req = urllib.request.Request(
@@ -119,16 +136,19 @@ def _call_deepseek(api_key: str, title: str, diff: str) -> str:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
             body = json.loads(resp.read())
         content = body["choices"][0]["message"].get("content")
-        if isinstance(content, str) and content.strip():
+        if _is_valid_review(content):
             return content.strip()
         if attempt + 1 < MAX_ATTEMPTS:
             payload["messages"].append(
                 {
                     "role": "user",
-                    "content": "上一轮没有返回 review 正文。请直接输出最终中文 review。",
+                    "content": (
+                        "上一轮没有返回可发布的 review 正文。当前没有任何工具，"
+                        "禁止输出工具调用协议。请直接输出最终中文 review。"
+                    ),
                 }
             )
-    raise ValueError("DeepSeek 返回空 review 正文")
+    raise ValueError("DeepSeek 未返回可发布的 review 正文")
 
 
 def main() -> None:
@@ -141,6 +161,8 @@ def main() -> None:
             diff = f.read()
         with open(TITLE_PATH) as f:
             title = f.read().strip()
+        with open(RULES_PATH) as f:
+            rules = f.read()
     except OSError as e:
         _fail(f"读输入失败：{e}")
 
@@ -148,7 +170,7 @@ def main() -> None:
         _fail("diff 为空")
 
     try:
-        content = _call_deepseek(api_key, title, diff)
+        content = _call_deepseek(api_key, title, diff, rules)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:300]
         _fail(f"DeepSeek API HTTP {e.code}：{body}")
