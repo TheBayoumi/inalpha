@@ -53,7 +53,8 @@ export const MARKET_CONTEXT = `
   港股 / 全球指数 / FRED 宏观）；需后端有该 venue 的历史 K 线（先 backfill）
 - swarm.run_backtest_grid —— 同 paper.run_backtest，**全市场可 grid**；不要
   因为旧 prompt 印象拒绝美股 / A 股 / 指数的 grid 请求
-- trade.create_plan —— 当前 paper service 撮合只对 crypto 完整测过；其它市场跑通需 D-10+ 工作
+- trade.create_plan —— spot 现货模拟下单支持所有可报价市场；执行时由 paper service
+  重新获取 fresh ticker 作为参考价。perp 仍仅支持 crypto 永续标的
 
 ## 多空意识（两种模式：spot 现货做多 + perp 永续做空/杠杆）
 
