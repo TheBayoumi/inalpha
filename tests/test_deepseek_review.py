@@ -23,6 +23,9 @@ def _load_module():
 
 
 class _FakeResponse:
+    def __init__(self, content: str = "LGTM") -> None:
+        self._content = content
+
     def __enter__(self):
         return self
 
@@ -31,7 +34,7 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(
-            {"choices": [{"message": {"content": "LGTM"}}]}
+            {"choices": [{"message": {"content": self._content}}]}
         ).encode()
 
 
@@ -62,6 +65,31 @@ class DeepSeekReviewTest(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer secret-value")
         self.assertEqual(payload["model"], "deepseek-v4-pro")
         self.assertEqual(captured["timeout"], module.TIMEOUT_S)
+
+    def test_empty_content_retries_then_returns_review(self) -> None:
+        module = _load_module()
+        responses = [_FakeResponse(""), _FakeResponse("最终 review")]
+
+        with patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = module._call_deepseek("secret-value", "PR title", "diff body")
+
+        self.assertEqual(result, "最终 review")
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_repeated_empty_content_fails_instead_of_publishing_blank_review(self) -> None:
+        module = _load_module()
+
+        with patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=[_FakeResponse(""), _FakeResponse("   ")],
+        ):
+            with self.assertRaisesRegex(ValueError, "空 review 正文"):
+                module._call_deepseek("secret-value", "PR title", "diff body")
 
     def test_missing_key_writes_non_blocking_failure(self) -> None:
         module = _load_module()
