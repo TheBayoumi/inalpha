@@ -1,6 +1,7 @@
 """DeepSeek PR review 脚本回归测试。"""
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import json
 import os
@@ -78,6 +79,21 @@ class DeepSeekReviewTest(unittest.TestCase):
             side_effect=responses,
         ) as urlopen:
             result = module._call_deepseek("secret-value", "PR title", "diff body", "project rules")
+
+        self.assertEqual(result, "最终 review")
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_incomplete_response_retries_then_returns_review(self) -> None:
+        module = _load_module()
+
+        with patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=[http.client.IncompleteRead(b"{}"), _FakeResponse("最终 review")],
+        ) as urlopen:
+            result = module._call_deepseek(
+                "secret-value", "PR title", "diff body", "project rules"
+            )
 
         self.assertEqual(result, "最终 review")
         self.assertEqual(urlopen.call_count, 2)
