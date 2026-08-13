@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sys
@@ -133,8 +134,13 @@ def _call_deepseek(api_key: str, title: str, diff: str, rules: str) -> str:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-            body = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+                body = json.loads(resp.read())
+        except (http.client.IncompleteRead, TimeoutError):
+            if attempt + 1 < MAX_ATTEMPTS:
+                continue
+            raise
         content = body["choices"][0]["message"].get("content")
         if _is_valid_review(content):
             return content.strip()
