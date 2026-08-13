@@ -1,11 +1,10 @@
 """``(venue, symbol)`` → ``exchange_calendars`` 日历 code 解析。
 
 D-9.1a 收尾（多市场 ``MarketHoursRule``）：``InstrumentId.venue`` 是**数据源**
-标识（``yfinance`` / ``baostock`` / ``binance``），**不是交易所**。同一 venue 跨多
-市场——``yfinance`` 同时服务美股 / 全球指数 / 韩澳印，``baostock`` 同时服务
-A股 / 港股 / 日英德。因此必须结合 ``symbol`` 的前缀（``sh.`` / ``sz.`` / ``hk.`` /
-``jp.`` / ``uk.`` / ``de.``）或后缀（``.KS`` / ``.AX`` / ``.NS`` / ``.T`` / ``.L`` /
-``.DE`` / ``.PA`` / ``.TO`` / ``.SA``）/ 指数前缀（``^``）才能定位真实交易所。
+标识（``yfinance`` / ``baostock`` / ``binance``），**不是交易所**。``yfinance`` 同时服务
+美股、全球指数和海外单股，必须结合 symbol 的后缀（``.KS`` / ``.AX`` / ``.NS`` /
+``.T`` / ``.L`` / ``.DE`` / ``.PA`` / ``.TO`` / ``.SA``）或指数前缀（``^``）定位市场；
+``baostock`` / legacy ``akshare`` 的 A 股则兼容 ``sh.600519`` 与 ``600519.SH`` 两种格式。
 
 返回 ``exchange_calendars`` 的 calendar code（``XNYS`` / ``XSHG`` / ``XHKG`` …）；
 下列情形返 ``None``（由上层 :class:`RoutingCalendar` 特判）：
@@ -42,15 +41,36 @@ _CRYPTO_VENUES: frozenset[str] = frozenset(
 # 走 yfinance / alpaca 的美股 + 全球单股 + 指数数据源
 _US_DATA_VENUES: frozenset[str] = frozenset({"yfinance", "alpaca"})
 
-# baostock symbol 前缀 → calendar code（sz. 复用 XSHG）
-_AKSHARE_PREFIX_TO_CODE: dict[str, str] = {
+# baostock / legacy akshare 的 A 股 market code。前缀格式用于 canonical identity；
+# 后缀格式仅为兼容仍在调用 data API 的旧客户端，paper 的币种/日历判断必须与 data
+# 的 canonicalize_market_identity 接受范围一致，避免行情按 A 股返回却按 USD 落账。
+_A_SHARE_VENUES: frozenset[str] = frozenset({"akshare", "baostock"})
+_A_SHARE_PREFIX_TO_CODE: dict[str, str] = {
     "sh": "XSHG",
     "sz": "XSHG",
+}
+_LEGACY_AKSHARE_GLOBAL_PREFIX_TO_CODE: dict[str, str] = {
     "hk": "XHKG",
     "jp": "XTKS",
     "uk": "XLON",
     "de": "XFRA",
 }
+
+
+def _a_share_calendar_code(symbol: str) -> str | None:
+    """识别 ``sh.600519`` / ``600519.SH``，返回沪深共用的 ``XSHG``。"""
+    s = symbol.strip().lower()
+    if "." not in s:
+        return None
+
+    prefix, code = s.split(".", 1)
+    if prefix in _A_SHARE_PREFIX_TO_CODE and code.isdigit() and len(code) == 6:
+        return _A_SHARE_PREFIX_TO_CODE[prefix]
+
+    code, suffix = s.rsplit(".", 1)
+    if suffix in _A_SHARE_PREFIX_TO_CODE and code.isdigit() and len(code) == 6:
+        return _A_SHARE_PREFIX_TO_CODE[suffix]
+    return None
 
 # yfinance / alpaca symbol 后缀 → calendar code（.ns 复用 XBOM）。
 # 按长度降序匹配，避免 ".to"（加拿大）被 ".t"（日本）误截。
@@ -109,9 +129,14 @@ def resolve_calendar_code(venue: str, symbol: str) -> str | None:
     if v == "fred":
         return None  # 宏观，无交易时段
 
-    if v in ("akshare", "baostock"):
-        prefix = s.split(".", 1)[0] if "." in s else ""
-        return _AKSHARE_PREFIX_TO_CODE.get(prefix)
+    if v in _A_SHARE_VENUES:
+        a_share_code = _a_share_calendar_code(s)
+        if a_share_code is not None:
+            return a_share_code
+        if v == "akshare":
+            prefix = s.split(".", 1)[0] if "." in s else ""
+            return _LEGACY_AKSHARE_GLOBAL_PREFIX_TO_CODE.get(prefix)
+        return None
 
     if v in _US_DATA_VENUES:
         if s.startswith("^"):

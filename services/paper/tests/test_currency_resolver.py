@@ -17,9 +17,11 @@ from inalpha_paper.execution.currency_resolver import resolve_currency
         # 美股 / yfinance 无后缀 → USD
         ("yfinance", "AAPL", "USD"),
         ("alpaca", "TSLA", "USD"),
-        # A股 canonical venue + 迁移前旧值
+        # A股 canonical / 兼容格式 + 迁移前旧 venue
         ("baostock", "sh.600519", "CNY"),
         ("baostock", "sz.000001", "CNY"),
+        ("baostock", "600519.SH", "CNY"),
+        ("akshare", "000001.SZ", "CNY"),
         ("akshare", "sh.600519", "CNY"),
         # 旧 akshare 全球前缀只为已持久化记录保留
         ("akshare", "hk.00700", "HKD"),
