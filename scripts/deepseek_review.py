@@ -31,6 +31,7 @@ OUT_PATH = "/tmp/review_body.txt"
 BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
 TIMEOUT_S = 900  # 全量 diff 给足推理时间
+MAX_ATTEMPTS = 2  # 正常结束但 content 为空时仅重试一次
 
 SYSTEM_PROMPT = """\
 你是这个仓库的资深 reviewer。目标：在合并前尽量拦住真正的 bug、设计缺陷、架构失误。
@@ -95,6 +96,7 @@ def _fail(msg: str) -> None:
 
 
 def _call_deepseek(api_key: str, title: str, diff: str) -> str:
+    """调用 DeepSeek；正常响应却无正文时重试一次，禁止发布空 review。"""
     payload = {
         "model": MODEL,
         "messages": [
@@ -104,18 +106,29 @@ def _call_deepseek(api_key: str, title: str, diff: str) -> str:
         "temperature": 0.1,
         "max_tokens": 4096,
     }
-    req = urllib.request.Request(
-        f"{BASE_URL}/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-        body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"]
+    for attempt in range(MAX_ATTEMPTS):
+        req = urllib.request.Request(
+            f"{BASE_URL}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+            body = json.loads(resp.read())
+        content = body["choices"][0]["message"].get("content")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if attempt + 1 < MAX_ATTEMPTS:
+            payload["messages"].append(
+                {
+                    "role": "user",
+                    "content": "上一轮没有返回 review 正文。请直接输出最终中文 review。",
+                }
+            )
+    raise ValueError("DeepSeek 返回空 review 正文")
 
 
 def main() -> None:
