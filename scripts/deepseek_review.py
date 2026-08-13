@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""GLM-5.2 PR review——claude-review.yml 调用,也可本地跑。
+"""DeepSeek V4 Pro PR review——claude-review.yml 调用，也可本地跑。
 
 环境:
-- ``ZHIPUAI_API_KEY``(必填)
-- ``GLM_BASE_URL``(默认 https://yuanyuaicloud.cn/v1)
-- ``GLM_MODEL``(默认 glm-5.2)
+- ``DEEPSEEK_API_KEY``（必填）
+- ``DEEPSEEK_BASE_URL``（默认 https://api.deepseek.com/v1）
+- ``DEEPSEEK_MODEL``（默认 deepseek-v4-pro）
 
 输入:
-- ``/tmp/pr_diff.txt``   PR diff(claude-review.yml 前一步 ``gh pr diff`` 落盘)
+- ``/tmp/pr_diff.txt``   PR diff（claude-review.yml 前一步 ``gh pr diff`` 落盘）
 - ``/tmp/pr_title.txt``  PR 标题
 
 输出:
-- ``/tmp/review_body.txt``  渲染好的 markdown(后一步 gh pr comment 贴出)
+- ``/tmp/review_body.txt``  渲染好的 markdown（后一步 gh pr comment 贴出）
 
-约定:任何失败都写 failure 说明后 exit 0,不让 review 挂 PR checks。
-不截断 diff——GLM-5.2 1M 上下文,全量喂。
+约定:任何失败都写 failure 说明后 exit 0，不让 review 挂 PR checks。
+不截断 diff，完整交给模型评审。
 """
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ DIFF_PATH = "/tmp/pr_diff.txt"
 TITLE_PATH = "/tmp/pr_title.txt"
 OUT_PATH = "/tmp/review_body.txt"
 
-BASE_URL = os.environ.get("GLM_BASE_URL", "https://yuanyuaicloud.cn/v1")
-MODEL = os.environ.get("GLM_MODEL", "glm-5.2")
-TIMEOUT_S = 900  # 全量 diff + 1M 上下文,给足推理时间
+BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
+TIMEOUT_S = 900  # 全量 diff 给足推理时间
 
 SYSTEM_PROMPT = """\
 你是这个仓库的资深 reviewer。目标：在合并前尽量拦住真正的 bug、设计缺陷、架构失误。
@@ -87,14 +87,14 @@ _SEV_ICON = {"critical": "🔴", "major": "🟠", "medium": "🟡"}  # unused, k
 
 
 def _fail(msg: str) -> None:
-    """写失败说明后正常退出(非阻塞)。"""
-    print(f"glm_review: {msg}", file=sys.stderr)
+    """写失败说明后正常退出（非阻塞）。"""
+    print(f"deepseek_review: {msg}", file=sys.stderr)
     with open(OUT_PATH, "w") as f:
-        f.write(f"## 🤖 GLM-5.2 PR Review\n\n⚠️ review 未完成：{msg}\n")
+        f.write(f"## 🤖 DeepSeek V4 Pro PR Review\n\n⚠️ review 未完成：{msg}\n")
     sys.exit(0)
 
 
-def _call_glm(api_key: str, title: str, diff: str) -> str:
+def _call_deepseek(api_key: str, title: str, diff: str) -> str:
     payload = {
         "model": MODEL,
         "messages": [
@@ -119,9 +119,9 @@ def _call_glm(api_key: str, title: str, diff: str) -> str:
 
 
 def main() -> None:
-    api_key = os.environ.get("ZHIPUAI_API_KEY", "")
+    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not api_key:
-        _fail("ZHIPUAI_API_KEY 未配置(repo Settings → Secrets → Actions)")
+        _fail("DEEPSEEK_API_KEY 未配置（repo Settings → Secrets → Actions）")
 
     try:
         with open(DIFF_PATH) as f:
@@ -135,17 +135,17 @@ def main() -> None:
         _fail("diff 为空")
 
     try:
-        content = _call_glm(api_key, title, diff)
+        content = _call_deepseek(api_key, title, diff)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:300]
-        _fail(f"GLM API HTTP {e.code}：{body}")
+        _fail(f"DeepSeek API HTTP {e.code}：{body}")
     except Exception as e:
-        _fail(f"GLM API 调用失败：{e}")
+        _fail(f"DeepSeek API 调用失败：{e}")
 
-    body = "## 🤖 GLM-5.2 PR Review\n\n" + content
+    body = "## 🤖 DeepSeek V4 Pro PR Review\n\n" + content
     with open(OUT_PATH, "w") as f:
         f.write(body)
-    print(f"glm_review: done, {len(body)} chars → {OUT_PATH}")
+    print(f"deepseek_review: done, {len(body)} chars → {OUT_PATH}")
 
 
 if __name__ == "__main__":
