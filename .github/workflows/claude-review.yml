@@ -1,15 +1,15 @@
-name: Claude PR Review
+name: DeepSeek PR Review
 
 # PR 打开 / reopen / 每次 push 新 commit（synchronize）时自动 review diff。
 # 防邮件洪水靠三道闸而非「少触发」：① concurrency + cancel-in-progress 让同一 PR
 # 新 push 立刻取消上一轮；② review step 只维护**一条 sticky 总结评论**
 # （gh pr comment --edit-last 原地覆盖，GitHub 对编辑评论不发邮件，仅首条发一封）；
 # ③ 不逐行贴 inline 评论。需对历史 commit 重审可去 Actions 页跑 workflow_dispatch。
-# 非阻塞设计：即使 GLM 出错（API 超时、token 过期等），
+# 非阻塞设计：即使 DeepSeek 出错（API 超时、token 过期等），
 # 本 workflow 不会阻止 PR 合并。review 评论是锦上添花，不是门禁。
-# Auth: 智谱 GLM API key 存在 GitHub Actions Secret ZHIPUAI_API_KEY
+# Auth: DeepSeek API key 存在 GitHub Actions Secret DEEPSEEK_API_KEY
 #
-# 改编自原始 claude-review.yml——只换了底层模型为 GLM-5.2，prompt 和编排逻辑保留。
+# 保留原始 review prompt 和 sticky 评论编排，只替换底层模型。
 
 on:
   pull_request:
@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   review:
-    name: Claude · auto-review PR diff（非阻塞）
+    name: DeepSeek · auto-review PR diff（非阻塞）
     runs-on: ubuntu-latest
     # 🔑 非阻塞关键：即使本 job 失败，也标记为成功，不卡 PR 合并
     continue-on-error: true
@@ -55,22 +55,22 @@ jobs:
           echo "diff_lines=$(wc -l < /tmp/pr_diff.txt)" >> $GITHUB_OUTPUT
           gh pr view "$PR_NUMBER" --json title,body,headRefName,baseRefName --jq '"\(.title) | \(.headRefName) → \(.baseRefName)"' > /tmp/pr_title.txt
 
-      - name: GLM-5.2 · review
+      - name: DeepSeek V4 Pro · review
         id: review
         # 内层 step 也 continue-on-error，防止 Python 抛异常
         continue-on-error: true
         env:
-          ZHIPUAI_API_KEY: ${{ secrets.ZHIPUAI_API_KEY }}
-        run: python3 scripts/glm_review.py
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: python3 scripts/deepseek_review.py
 
-      # 即使 GLM 挂了，也记录一下方便排查
+      # 即使 DeepSeek 挂了，也记录一下方便排查
       - name: Log review status
         if: always()
         run: |
           if [ "${{ steps.review.outcome }}" = "success" ]; then
-            echo "GLM review completed successfully"
+            echo "DeepSeek review completed successfully"
           else
-            echo "GLM review skipped or failed (non-blocking) — outcome: ${{ steps.review.outcome }}"
+            echo "DeepSeek review skipped or failed (non-blocking) — outcome: ${{ steps.review.outcome }}"
           fi
 
       - name: Post/Update sticky comment
