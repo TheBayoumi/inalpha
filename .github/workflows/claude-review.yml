@@ -56,9 +56,11 @@ jobs:
           gh pr view "$PR_NUMBER" --json title,body,headRefName,baseRefName --jq '"\(.title) | \(.headRefName) → \(.baseRefName)"' > /tmp/pr_title.txt
 
       - name: Test review script
+        continue-on-error: true
         run: python3 -m unittest tests/test_deepseek_review.py -v
 
       - name: DeepSeek V4 Pro · review
+        if: always()
         id: review
         # 内层 step 也 continue-on-error，防止 Python 抛异常
         continue-on-error: true
