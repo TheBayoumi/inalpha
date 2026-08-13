@@ -207,7 +207,7 @@ async def execute_plan(
 
     1. 读 plan（**不消费 token**）拿 venue/symbol —— 失败可重试
     2. 取 refPrice（网络调用，**不消费 token**）—— REF_PRICE_UNAVAILABLE 时
-       token 仍有效，caller backfill 后再来即可
+       token 仍有效，报价源恢复后可用同一 token 重试
     3. OrderExecutor 算成交（pure）
     4. **单一事务**：consume_approval → orders insert → positions/cash
        → record_execution；任何一步失败回滚 token 也回滚（保持 'approved' 可重试）
@@ -261,7 +261,11 @@ async def execute_plan(
     user_token = authorization.removeprefix("Bearer ").strip()
     async with DataClient(settings.data_service_url, user_token) as data_client:
         try:
-            ticker = await data_client.get_ticker(venue=venue, symbol=symbol)
+            ticker = await data_client.get_ticker(
+                venue=venue,
+                symbol=symbol,
+                fresh=True,
+            )
         except Exception as e:
             raise PlanHttpError(
                 f"failed to fetch ref_price for {symbol}@{venue}: {e}",

@@ -60,10 +60,11 @@ class DataClient:
         symbol: str,
         fresh: bool | None = None,
     ) -> dict[str, Any]:
-        """``GET /ticker`` —— 服务端取最新价（D-8a' 加，给 /orders/submit 自取 refPrice）。
+        """``GET /ticker`` —— 获取单值行情，供订单参考价与账户估值使用。
 
-        ``fresh=False``:只读 data 缓存不触发慢 backfill(快照类调用用,如 /accounts/me
-        mark-to-market 估值);``None`` 用服务端默认(下单 refPrice 保持 fresh 语义)。
+        ``fresh=True`` 要求 data-service 直接调用 venue 的 ticker capability；
+        ``fresh=False`` 只读 DB 缓存。``fresh=None`` 会省略 query 参数，当前服务端
+        默认是 DB-only；交易执行调用方必须显式传 ``True``。
 
         Returns dict with: ``venue, symbol, price, ts, source, is_stale, stale_seconds``。
         """

@@ -90,10 +90,9 @@ class TickerQuery(BaseModel):
     fresh: bool = Field(
         default=False,
         description=(
-            "true 时绕过 DB 缓存，直接调外部市场实时 ticker。"
-            "支持 venue：binance / yfinance / alpaca；baostock / fred 不支持，"
-            "会返 422 FRESH_NOT_SUPPORTED_FOR_VENUE 并提示切 fresh=false。"
-            "适合 scheduler 周期性拉真·最新价的场景。"
+            "true 时绕过 DB 缓存，直接调用 venue 的外部 ticker capability。"
+            "当前支持 binance / yfinance / alpaca / baostock；其它 venue 若未实现，"
+            "会返回 422 FRESH_NOT_SUPPORTED_FOR_VENUE。适合实时行情和交易执行取价。"
         ),
     )
 

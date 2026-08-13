@@ -663,7 +663,11 @@ async def _resolve_ref_price(
     user_token = authorization.removeprefix("Bearer ").strip()
     async with DataClient(settings.data_service_url, user_token) as data_client:
         try:
-            ticker = await data_client.get_ticker(venue=req.venue, symbol=req.symbol)
+            ticker = await data_client.get_ticker(
+                venue=req.venue,
+                symbol=req.symbol,
+                fresh=True,
+            )
         except Exception as e:
             raise RefPriceUnavailableError(
                 f"failed to fetch ref_price for {req.symbol}@{req.venue}: {e}",
