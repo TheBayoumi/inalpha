@@ -56,7 +56,7 @@ class DeepSeekReviewTest(unittest.TestCase):
             return _FakeResponse()
 
         with patch.object(module.urllib.request, "urlopen", side_effect=fake_urlopen):
-            result = module._call_deepseek("secret-value", "PR title", "diff body")
+            result = module._call_deepseek("secret-value", "PR title", "diff body", "project rules")
 
         request = captured["request"]
         payload = json.loads(request.data)
@@ -64,6 +64,8 @@ class DeepSeekReviewTest(unittest.TestCase):
         self.assertEqual(request.full_url, "https://api.deepseek.com/v1/chat/completions")
         self.assertEqual(request.get_header("Authorization"), "Bearer secret-value")
         self.assertEqual(payload["model"], "deepseek-v4-pro")
+        self.assertEqual(payload["max_tokens"], 16384)
+        self.assertIn("## 项目规则（CLAUDE.md）\nproject rules", payload["messages"][1]["content"])
         self.assertEqual(captured["timeout"], module.TIMEOUT_S)
 
     def test_empty_content_retries_then_returns_review(self) -> None:
@@ -75,7 +77,24 @@ class DeepSeekReviewTest(unittest.TestCase):
             "urlopen",
             side_effect=responses,
         ) as urlopen:
-            result = module._call_deepseek("secret-value", "PR title", "diff body")
+            result = module._call_deepseek("secret-value", "PR title", "diff body", "project rules")
+
+        self.assertEqual(result, "最终 review")
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_tool_protocol_retries_then_returns_review(self) -> None:
+        module = _load_module()
+        protocol = '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="Read">'
+        responses = [_FakeResponse(protocol), _FakeResponse("最终 review")]
+
+        with patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = module._call_deepseek(
+                "secret-value", "PR title", "diff body", "project rules"
+            )
 
         self.assertEqual(result, "最终 review")
         self.assertEqual(urlopen.call_count, 2)
@@ -88,8 +107,10 @@ class DeepSeekReviewTest(unittest.TestCase):
             "urlopen",
             side_effect=[_FakeResponse(""), _FakeResponse("   ")],
         ):
-            with self.assertRaisesRegex(ValueError, "空 review 正文"):
-                module._call_deepseek("secret-value", "PR title", "diff body")
+            with self.assertRaisesRegex(ValueError, "未返回可发布"):
+                module._call_deepseek(
+                    "secret-value", "PR title", "diff body", "project rules"
+                )
 
     def test_missing_key_writes_non_blocking_failure(self) -> None:
         module = _load_module()
