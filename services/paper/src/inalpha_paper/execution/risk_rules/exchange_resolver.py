@@ -49,7 +49,7 @@ _A_SHARE_PREFIX_TO_CODE: dict[str, str] = {
     "sh": "XSHG",
     "sz": "XSHG",
 }
-_LEGACY_AKSHARE_GLOBAL_PREFIX_TO_CODE: dict[str, str] = {
+_LEGACY_GLOBAL_PREFIX_TO_CODE: dict[str, str] = {
     "hk": "XHKG",
     "jp": "XTKS",
     "uk": "XLON",
@@ -134,10 +134,8 @@ def resolve_calendar_code(venue: str, symbol: str) -> str | None:
         a_share_code = _a_share_calendar_code(s)
         if a_share_code is not None:
             return a_share_code
-        if v == "akshare":
-            prefix = s.split(".", 1)[0] if "." in s else ""
-            return _LEGACY_AKSHARE_GLOBAL_PREFIX_TO_CODE.get(prefix)
-        return None
+        prefix = s.split(".", 1)[0] if "." in s else ""
+        return _LEGACY_GLOBAL_PREFIX_TO_CODE.get(prefix)
 
     if v in _US_DATA_VENUES:
         if s.startswith("^"):

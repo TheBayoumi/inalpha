@@ -22,7 +22,7 @@ def canonicalize_market_identity(venue: str, symbol: str) -> tuple[str, str]:
         A_SHARE_VENUE,
     }:
         return A_SHARE_VENUE, normalized_symbol
-    if normalized_venue == LEGACY_A_SHARE_VENUE:
+    if normalized_venue in {LEGACY_A_SHARE_VENUE, A_SHARE_VENUE}:
         global_symbol = _canonicalize_legacy_global_symbol(symbol)
         if global_symbol is not None:
             return YFINANCE_VENUE, global_symbol
@@ -48,7 +48,7 @@ def legacy_global_identity_variants(
     venue: str,
     symbol: str,
 ) -> tuple[str, str, str] | None:
-    """返回 legacy ``akshare/<prefix>.<code>`` 对应的 yfinance identity。"""
+    """返回旧 ``akshare|baostock/<prefix>.<code>`` 对应的 yfinance identity。"""
     canonical_venue, canonical_symbol = canonicalize_market_identity(venue, symbol)
     if canonical_venue != YFINANCE_VENUE or "." not in canonical_symbol:
         return None
