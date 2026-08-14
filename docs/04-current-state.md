@@ -3,7 +3,8 @@
 > 状态：**D-12 因子库闭环完成（2026-06-11）**——因子血缘 + 衰减巡检 + monthly
 > 宏观 + 因子发现 L1，在 D-11（多市场模拟盘）/ D-10（web 搜索 + 财报基本面 +
 > 多市场数据）/ D-9（Plan/Exec 闭环 + LLM 自创策略 + 风控引擎）/ D-9.1a 基础上落地。
-> 下一里程碑：E2 多代演化（issue #7）；research-hub（issue #6）已于 2026-06-12 收口（见下）。
+> 下一里程碑：E2 多代演化（issue #7）；E1 单代生产闭环已落地（见下），
+> research-hub（issue #6）已于 2026-06-12 收口。
 >
 > 本文回答的问题：**clone 仓库后，"现在到底做到哪里、决策链路长什么样"。**
 > 详细架构与设计取舍见 [`docs/03-kernel-design.md`](./03-kernel-design.md)；
@@ -171,8 +172,10 @@ sequenceDiagram
   港股 / 日英德 / 韩澳印 / 全球指数）生效——含节假日 / 午休 / 半日市 / DST，锁
   粒度按交易所 code（issue #8 收口）。D-9 闭环完成。
 
-不在范围（下一阶段）：MAP-Elites / Island Model / 多代演化 / unified-diff 变异（E2/E3）；
-`services/evolver/` 独立服务（等多代演化需求出现再拆）。
+不在范围（下一阶段）：MAP-Elites / Island Model / 多代选择与 early stopping（E2/E3）。
+E1 已拆出 `services/evolver/` 独立服务，完成 unified-diff 单代变异、真实 frozen bars、
+seed / buy-and-hold / 全候选同数据哈希评估、owner 隔离、数据库幂等与异步 run/slot 状态机；
+演化需用户显式授权，不会在候选采纳后自动产生额外 LLM 费用。
 （注：promoted 候选的 live runner 原列在此处，已在 D-11 落地，见下方 D-11 小节。）
 
 ---
@@ -486,7 +489,8 @@ spot 仍严格 long-only（裸空 / 超卖翻空被守门拒），做空 / 杠�
 
 > 重心：模拟盘（paper）先于实盘（live）。
 
-- **E2 多代演化**（issue #7 · ADR-0020）：MAP-Elites / Island Model（E1 MVP 已上）
+- **E2 多代演化**（issue #7）：在已完成的 E1 单代生产闭环上增加 best-parent 多代选择与
+  early stopping；MAP-Elites / Island Model 后置到真实运行数据证明需要时再做
 - **delegation hop**（issue #5 · ADR-0012 补丁）：sub-strategy 派生计划的转授权链
 
 > 已收口：paper live runner（#1，D-11）、PnL 净口径 / 运行时长 TTL / build 退避（#45 /

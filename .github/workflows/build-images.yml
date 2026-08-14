@@ -1,8 +1,8 @@
 name: Build & Push Images
 
-# CI 构建 6 个生产镜像(data/paper/research/factor + mastra + dashboard)并推送 GHCR。
+# CI 构建 7 个生产镜像(data/paper/research/factor/evolver + mastra + dashboard)并推送 GHCR。
 # VPS 端只 `docker compose pull` 不 `build`,绕开小内存机现场 build OOM。
-# 见 docs/miro/decisions/0058。部署仍是手动 `scripts/deploy.sh`(非自动 CD)。
+# 部署仍是手动 `scripts/deploy.sh`(非自动 CD)。
 #
 # 镜像命名:ghcr.io/<owner>/inalpha-<service>:{latest,<sha>}
 # migrate 服务复用 inalpha-paper 镜像(不单独构建)。
@@ -68,6 +68,33 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/inalpha-${{ matrix.service }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  evolver:
+    name: build · evolver
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve owner (lowercase)
+        id: meta
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: services
+          file: infra/docker/Dockerfile.evolver
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/inalpha-evolver:latest
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/inalpha-evolver:${{ github.sha }}
+          cache-from: type=gha,scope=evolver
+          cache-to: type=gha,mode=max,scope=evolver
 
   mastra:
     name: build · mastra

@@ -141,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [data, paper, research, factor]
+        service: [data, paper, research, factor, evolver]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv

@@ -241,6 +241,29 @@ else
     ok "$ORCH_SRC 不存在（跳过）"
 fi
 
+# ---------- C9: Evolver 开发与部署接线 ----------
+sect "C9 · Evolver 开发与部署接线"
+
+EVOLVER_CHECKS=(
+    "scripts/dev.sh|evolver:8005|dev.sh 管理 evolver:8005"
+    "infra/docker-compose.prod.yml|^  evolver:|prod Compose 声明 evolver service"
+    "infra/docker-compose.selfhost.yml|^  evolver:|selfhost Compose 覆盖 evolver"
+    "infra/docker-compose.prod.yml|EVOLVER_SERVICE_URL: http://evolver:8005|容器注入 Evolver URL"
+    ".github/workflows/ci.yml|service: \[data, paper, research, factor, evolver\]|CI lint 覆盖 evolver"
+    ".github/workflows/build-images.yml|inalpha-evolver:latest|CI 发布 evolver 镜像"
+)
+for check in "${EVOLVER_CHECKS[@]}"; do
+    IFS='|' read -r file pattern label <<< "$check"
+    if grep -qE "$pattern" "$file" 2>/dev/null; then
+        ok "$label"
+    else
+        fail "$label 缺失（$file）"
+    fi
+done
+for file in infra/docker/Dockerfile.evolver services/evolver/uv.lock; do
+    [[ -f "$file" ]] && ok "$file 存在" || fail "$file 不存在"
+done
+
 # ---------- 总结 ----------
 echo
 echo "===================="
