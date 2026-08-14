@@ -497,6 +497,9 @@
         "risk": "Risk panel",
         "activity": "Agent log",
         "divination": "Divination",
+        "evolution_list": "Strategy evolution",
+        "evolution_run_detail": "Evolution run",
+        "evolution_candidate_detail": "Evolution candidate",
         "overview": "Overview"
       }
     }

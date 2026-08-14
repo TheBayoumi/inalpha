@@ -497,6 +497,9 @@
         "risk": "风控面板",
         "activity": "Agent 日志",
         "divination": "占卜台",
+        "evolution_list": "策略演化",
+        "evolution_run_detail": "演化运行",
+        "evolution_candidate_detail": "演化候选",
         "overview": "总览"
       }
     }
