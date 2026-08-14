@@ -8,6 +8,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
+from .market_identity import canonicalize_market_identity
+
 
 def _assume_utc_if_naive(v: datetime) -> datetime:
     return v.replace(tzinfo=UTC) if v.tzinfo is None else v
@@ -644,7 +646,8 @@ class SubmitOrderRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_price_for_type(self) -> SubmitOrderRequest:
+    def _normalize_and_check_order(self) -> SubmitOrderRequest:
+        self.venue, self.symbol = canonicalize_market_identity(self.venue, self.symbol)
         # 用 PydanticCustomError 而不是 ValueError —— 后者会把 exception 对象塞进
         # error.ctx，FastAPI 的统一错误响应里 errors() 无法 JSON 序列化（trip TypeError）
         if self.order_type == "LIMIT" and self.price is None:
@@ -879,6 +882,11 @@ class CreatePlanRequest(BaseModel):
     price: float | None = Field(default=None, description="LIMIT 必填；MARKET 必须省略")
     rationale: str = Field(..., min_length=1)
     expire_in_seconds: int = Field(default=300, ge=1, le=3600)
+
+    @model_validator(mode="after")
+    def _normalize_market_identity(self) -> CreatePlanRequest:
+        self.venue, self.symbol = canonicalize_market_identity(self.venue, self.symbol)
+        return self
 
     model_config = {"populate_by_name": True}
 
