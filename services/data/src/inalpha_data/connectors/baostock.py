@@ -106,10 +106,14 @@ async def _throttled_to_thread[FetchResult](
     /,
     **kwargs: Any,
 ) -> FetchResult:
-    """串行执行同步源站请求；超时后等线程真正退出才释放共享锁。"""
+    """串行执行同步源站请求；等待锁或执行超时均及时失败。
+
+    同步 worker 超时后仍在后台运行时，锁只由 handoff task 在 worker 真正退出后
+    释放；后续 caller 等锁也受 ``_FETCH_TIMEOUT_S`` 约束，不会跟随残留线程永久挂起。
+    """
     global _last_fetch_mono
     lock = _FETCH_LOCK
-    await lock.acquire()
+    await asyncio.wait_for(lock.acquire(), timeout=_FETCH_TIMEOUT_S)
     release_here = True
     try:
         wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
