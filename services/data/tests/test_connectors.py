@@ -217,6 +217,39 @@ def test_baostock_fetch_ticker_rejects_missing_quote_fields(monkeypatch) -> None
         asyncio.run(BaostockConnector().fetch_ticker("sh.000001"))
 
 
+def test_baostock_fetch_ticker_serializes_tencent_requests(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """并发 ticker 必须复用公开源站锁，不能同时打腾讯接口。"""
+    from inalpha_data.connectors import baostock as baostock_mod
+    from inalpha_data.connectors.baostock import BaostockConnector
+
+    active = 0
+    max_active = 0
+
+    def _fake_fetch(*, symbol: str) -> tuple[datetime, float]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        time.sleep(0.02)
+        active -= 1
+        return datetime(2026, 7, 22, 7, 0, tzinfo=UTC), float(symbol[-1])
+
+    monkeypatch.setattr(baostock_mod, "_FETCH_LOCK", asyncio.Lock())
+    monkeypatch.setattr(baostock_mod, "_MIN_FETCH_INTERVAL_S", 0.0)
+    monkeypatch.setattr(baostock_mod, "_last_fetch_mono", 0.0)
+    monkeypatch.setattr(baostock_mod, "_fetch_tencent_ticker_sync", _fake_fetch)
+
+    async def _run() -> list[tuple[datetime, float]]:
+        connector = BaostockConnector()
+        return await asyncio.gather(
+            connector.fetch_ticker("sh.000001"),
+            connector.fetch_ticker("sz.000002"),
+        )
+
+    results = asyncio.run(_run())
+    assert max_active == 1
+    assert [price for _, price in results] == [1.0, 2.0]
+
+
 @pytest.mark.parametrize(
     ("timeframe", "expected_url", "expected_period", "expected_end"),
     [
