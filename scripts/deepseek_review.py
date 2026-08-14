@@ -141,10 +141,10 @@ def _call_deepseek(api_key: str, title: str, diff: str, rules: str) -> str:
             if attempt + 1 < MAX_ATTEMPTS:
                 continue
             raise
-        content = body["choices"][0]["message"].get("content")
-        if _is_valid_review(content):
-            return content.strip()
         choice = body["choices"][0]
+        content = choice["message"].get("content")
+        if choice.get("finish_reason") == "stop" and _is_valid_review(content):
+            return content.strip()
         usage = body.get("usage", {})
         reasoning_tokens = usage.get("completion_tokens_details", {}).get(
             "reasoning_tokens", "unknown"
