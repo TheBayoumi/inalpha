@@ -17,6 +17,7 @@ from inalpha_paper.execution.risk_rules.exchange_resolver import resolve_calenda
         # 迁移前持久化的 akshare 记录继续兼容
         ("akshare", "sh.600519", "XSHG"),
         ("akshare", "hk.00700", "XHKG"),
+        ("baostock", "hk.00700", "XHKG"),
         ("akshare", "jp.6758", "XTKS"),
         ("akshare", "uk.VOD", "XLON"),
         ("akshare", "de.BMW", "XFRA"),

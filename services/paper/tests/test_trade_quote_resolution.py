@@ -140,7 +140,7 @@ def test_submit_sell_migrates_single_legacy_a_share_position(client: TestClient)
                         Decimal("1415"),
                         Decimal("0"),
                         1,
-                        "CNY",
+                        "USD",
                     ),
                 )
 
@@ -161,14 +161,29 @@ def test_submit_sell_migrates_single_legacy_a_share_position(client: TestClient)
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "FILLED"
+
+    async def _read_currency() -> str:
+        async with get_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT currency FROM positions WHERE account_id = %s",
+                    (str(account_id),),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                return str(row["currency"])
+
+    assert asyncio.run(_read_currency()) == "CNY"
     assert client.get("/positions", headers=headers).json() == []
 
 
+@pytest.mark.parametrize("legacy_venue", ["akshare", "baostock"])
 @respx.mock
 def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
     client: TestClient,
+    legacy_venue: str,
 ) -> None:
-    """旧 akshare 港股持仓可用 canonical fresh ticker 完成市价平仓。"""
+    """旧前缀格式港股持仓可用 canonical fresh ticker 完成市价平仓。"""
     import asyncio
     from decimal import Decimal
 
@@ -177,7 +192,7 @@ def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
     from inalpha_paper.account_id import account_id_from_sub
     from inalpha_paper.storage import accounts as accounts_store
 
-    sub, token = fresh_account_token("legacy-global-position")
+    sub, token = fresh_account_token(f"legacy-global-position-{legacy_venue}")
     account_id = account_id_from_sub(sub)
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -192,17 +207,24 @@ def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
                     ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())",
                     (
                         str(account_id),
-                        "akshare",
+                        legacy_venue,
                         "hk.00700",
                         Decimal("1"),
                         Decimal("600"),
                         Decimal("0"),
                         1,
-                        "HKD",
+                        "USD",
                     ),
                 )
 
     asyncio.run(_seed_legacy_position())
+    visible_rows = client.get("/positions", headers=headers).json()
+    assert len(visible_rows) == 1
+    assert (visible_rows[0]["venue"], visible_rows[0]["symbol"]) == (
+        "yfinance",
+        "0700.HK",
+    )
+    assert visible_rows[0]["currency"] == "HKD"
     route = respx.get(
         "http://data-mock.test/ticker",
         params={"venue": "yfinance", "symbol": "0700.HK", "fresh": "true"},
@@ -222,7 +244,7 @@ def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
         "/orders/submit",
         headers=headers,
         json={
-            "venue": "akshare",
+            "venue": legacy_venue,
             "symbol": "hk.00700",
             "side": "SELL",
             "type": "MARKET",
@@ -236,7 +258,96 @@ def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
     assert (body["venue"], body["symbol"]) == ("yfinance", "0700.HK")
     assert body["avg_fill_price"] == 620.0
     assert route.call_count == 1
+
+    async def _read_raw_position() -> dict[str, Any]:
+        async with get_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT venue, symbol, currency FROM positions WHERE account_id = %s",
+                    (str(account_id),),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                return dict(row)
+
+    stored = asyncio.run(_read_raw_position())
+    assert (stored["venue"], stored["symbol"]) == ("yfinance", "0700.HK")
+    assert stored["currency"] == "HKD"
     assert client.get("/positions", headers=headers).json() == []
+
+
+def test_account_snapshot_canonicalizes_legacy_global_position_for_mark(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """账户估值读取旧全球仓位时使用 canonical ticker 与正确计价币种。"""
+    import asyncio
+    from decimal import Decimal
+
+    from inalpha_shared.db import get_conn
+
+    from inalpha_paper.account_id import account_id_from_sub
+    from inalpha_paper.storage import accounts as accounts_store
+
+    ticker_calls: list[tuple[str, str, bool | None]] = []
+    fx_calls: list[tuple[str, str]] = []
+
+    class _StubDataClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        async def get_ticker(
+            self,
+            *,
+            venue: str,
+            symbol: str,
+            fresh: bool | None = None,
+        ) -> dict[str, Any]:
+            ticker_calls.append((venue, symbol, fresh))
+            return {"price": 620.0, "is_stale": False}
+
+        async def get_fx(self, *, base: str, quote: str) -> dict[str, Any]:
+            fx_calls.append((base, quote))
+            return {"rate": 0.1, "is_stale": False}
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("inalpha_paper.api.orders.DataClient", _StubDataClient)
+    sub, token = fresh_account_token("legacy-global-account-snapshot")
+    account_id = account_id_from_sub(sub)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def _seed_legacy_position() -> None:
+        async with get_conn() as conn:
+            await accounts_store.get_or_create(conn, account_id)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO positions ("
+                    "account_id, venue, symbol, quantity, avg_open_price, "
+                    "realized_pnl, generation, currency, updated_at"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())",
+                    (
+                        str(account_id),
+                        "baostock",
+                        "hk.00700",
+                        Decimal("1"),
+                        Decimal("600"),
+                        Decimal("0"),
+                        1,
+                        "USD",
+                    ),
+                )
+
+    asyncio.run(_seed_legacy_position())
+    response = client.get("/accounts/me", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert ticker_calls == [("yfinance", "0700.HK", False)]
+    assert fx_calls == [("HKD", "USD")]
+    assert body["positions_value"] == pytest.approx(62.0)
+    assert body["fx_warnings"] == []
 
 
 @respx.mock

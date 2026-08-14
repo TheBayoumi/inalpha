@@ -32,6 +32,7 @@ from ..market_identity import (
     LEGACY_A_SHARE_VENUE,
     YFINANCE_VENUE,
     a_share_identity_variants,
+    canonicalize_market_identity,
     legacy_global_identity_variants,
 )
 
@@ -45,26 +46,32 @@ async def _migrate_legacy_market_identity(
 ) -> tuple[str, str]:
     """锁住单个旧市场仓位并迁到 canonical key；重复 key 时 fail-closed。"""
     variants = a_share_identity_variants(venue, symbol)
-    legacy_venue = LEGACY_A_SHARE_VENUE
     market_label = "A-share"
     if variants is None:
         variants = legacy_global_identity_variants(venue, symbol)
         if variants is None:
             return venue, symbol
         canonical_venue = YFINANCE_VENUE
+        venue_predicate = "AND LOWER(BTRIM(venue)) IN (%s, %s, %s) "
+        venue_params = (
+            canonical_venue,
+            LEGACY_A_SHARE_VENUE,
+            A_SHARE_VENUE,
+        )
         market_label = "global"
     else:
         canonical_venue = A_SHARE_VENUE
+        venue_predicate = "AND LOWER(BTRIM(venue)) IN (%s, %s) "
+        venue_params = (canonical_venue, LEGACY_A_SHARE_VENUE)
     _, canonical_symbol, legacy_symbol = variants
     async with conn.cursor() as cur:
         await cur.execute(
-            "SELECT venue, symbol FROM positions WHERE account_id = %s "
-            "AND LOWER(BTRIM(venue)) IN (%s, %s) "
-            "AND LOWER(BTRIM(symbol)) IN (%s, %s) FOR UPDATE",
+            "SELECT venue, symbol, currency FROM positions WHERE account_id = %s "
+            + venue_predicate
+            + "AND LOWER(BTRIM(symbol)) IN (%s, %s) FOR UPDATE",
             (
                 str(account_id),
-                canonical_venue,
-                legacy_venue,
+                *venue_params,
                 canonical_symbol.lower(),
                 legacy_symbol.lower(),
             ),
@@ -77,15 +84,23 @@ async def _migrate_legacy_market_identity(
                 + ", ".join(identities)
             )
         if rows:
+            from ..execution.currency_resolver import resolve_currency
+
             stored_venue = rows[0]["venue"]
             stored_symbol = rows[0]["symbol"]
-            if (stored_venue, stored_symbol) != (canonical_venue, canonical_symbol):
+            stored_currency = rows[0]["currency"]
+            canonical_currency = resolve_currency(canonical_venue, canonical_symbol)
+            if (
+                (stored_venue, stored_symbol) != (canonical_venue, canonical_symbol)
+                or stored_currency != canonical_currency
+            ):
                 await cur.execute(
-                    "UPDATE positions SET venue = %s, symbol = %s, updated_at = NOW() "
-                    "WHERE account_id = %s AND venue = %s AND symbol = %s",
+                    "UPDATE positions SET venue = %s, symbol = %s, currency = %s, "
+                    "updated_at = NOW() WHERE account_id = %s AND venue = %s AND symbol = %s",
                     (
                         canonical_venue,
                         canonical_symbol,
+                        canonical_currency,
                         str(account_id),
                         stored_venue,
                         stored_symbol,
@@ -369,7 +384,11 @@ async def list_by_account(
     *,
     include_flat: bool = False,
 ) -> list[dict[str, Any]]:
-    """列出某 account 的所有持仓。默认过滤掉 quantity=0 的（已平仓但保留行）。"""
+    """列出账户持仓；默认过滤 flat，并在读侧规范化历史市场 identity/币种。
+
+    读侧转换不写库，确保账户估值与持仓展示会用当前 data connector identity；
+    下一次成交的事务迁移会再把同样的 canonical identity 和币种持久化。
+    """
     sql = (
         "SELECT venue, symbol, quantity, avg_open_price, realized_pnl, "
         "generation, ts_opened, open_order_id, currency, updated_at, "
@@ -383,7 +402,35 @@ async def list_by_account(
     async with conn.cursor() as cur:
         await cur.execute(sql, (str(account_id),))
         rows = await cur.fetchall()
-    return list(rows)  # type: ignore[arg-type]
+
+    from ..execution.currency_resolver import resolve_currency
+
+    normalized_rows: list[dict[str, Any]] = []
+    for row in rows:
+        normalized = dict(row)
+        canonical_venue, canonical_symbol = canonicalize_market_identity(
+            normalized["venue"],
+            normalized["symbol"],
+        )
+        identity_changed = (canonical_venue, canonical_symbol) != (
+            normalized["venue"],
+            normalized["symbol"],
+        )
+        if identity_changed:
+            normalized["venue"] = canonical_venue
+            normalized["symbol"] = canonical_symbol
+        if (
+            identity_changed
+            or a_share_identity_variants(canonical_venue, canonical_symbol) is not None
+            or legacy_global_identity_variants(canonical_venue, canonical_symbol)
+            is not None
+        ):
+            normalized["currency"] = resolve_currency(
+                canonical_venue,
+                canonical_symbol,
+            )
+        normalized_rows.append(normalized)
+    return normalized_rows
 
 
 async def sum_other_margin_used(
