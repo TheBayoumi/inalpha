@@ -53,13 +53,15 @@ export const MARKET_CONTEXT = `
   港股 / 全球指数 / FRED 宏观）；需后端有该 venue 的历史 K 线（先 backfill）
 - swarm.run_backtest_grid —— 同 paper.run_backtest，**全市场可 grid**；不要
   因为旧 prompt 印象拒绝美股 / A 股 / 指数的 grid 请求
-- trade.create_plan —— spot 现货模拟下单支持所有可报价市场；执行时由 paper service
-  重新获取 fresh ticker 作为参考价。perp 仍仅支持 crypto 永续标的
+- trade.create_plan —— 当前仅支持 spot 现货模拟计划；已验证 crypto / A 股。执行时由
+  paper service 获取 fresh ticker，因此只适用于实现外部 ticker capability 的交易 venue
+  （binance / yfinance / alpaca / baostock），FRED 宏观序列不可交易。plan 的 perp 参数尚未贯通，
+  不要用 trade.create_plan 创建永续计划
 
 ## 多空意识（两种模式：spot 现货做多 + perp 永续做空/杠杆）
 
-模拟盘有两种模式，由 \`paper.run_backtest\` / \`paper.start_strategy\` /
-\`trade.create_plan\` 的 \`tradingMode\` 参数选择：
+模拟盘回测与策略运行由 \`paper.run_backtest\` / \`paper.start_strategy\` 的
+\`tradingMode\` 参数选择；\`trade.create_plan\` 当前固定为 spot：
 
 - **spot（默认）**：现货做多。BUY 开多 → SELL 平多。标的：所有市场。
 - **perp**：USDT-M 永续 + 逐仓。**可做多也可做空**（BUY 开多 / SELL 开空 / 反方向平仓）。
