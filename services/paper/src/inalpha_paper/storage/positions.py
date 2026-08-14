@@ -30,22 +30,32 @@ from psycopg import AsyncConnection
 from ..market_identity import (
     A_SHARE_VENUE,
     LEGACY_A_SHARE_VENUE,
+    YFINANCE_VENUE,
     a_share_identity_variants,
+    legacy_global_identity_variants,
 )
 
 
-async def _migrate_legacy_a_share_identity(
+async def _migrate_legacy_market_identity(
     conn: AsyncConnection,
     *,
     account_id: UUID,
     venue: str,
     symbol: str,
 ) -> tuple[str, str]:
-    """锁住单个旧 A 股仓位并迁到 canonical key；重复 key 时 fail-closed。"""
+    """锁住单个旧市场仓位并迁到 canonical key；重复 key 时 fail-closed。"""
     variants = a_share_identity_variants(venue, symbol)
+    legacy_venue = LEGACY_A_SHARE_VENUE
+    market_label = "A-share"
     if variants is None:
-        return venue, symbol
-    canonical_venue, canonical_symbol, suffix_symbol = variants
+        variants = legacy_global_identity_variants(venue, symbol)
+        if variants is None:
+            return venue, symbol
+        canonical_venue = YFINANCE_VENUE
+        market_label = "global"
+    else:
+        canonical_venue = A_SHARE_VENUE
+    _, canonical_symbol, legacy_symbol = variants
     async with conn.cursor() as cur:
         await cur.execute(
             "SELECT venue, symbol FROM positions WHERE account_id = %s "
@@ -53,17 +63,17 @@ async def _migrate_legacy_a_share_identity(
             "AND LOWER(BTRIM(symbol)) IN (%s, %s) FOR UPDATE",
             (
                 str(account_id),
-                A_SHARE_VENUE,
-                LEGACY_A_SHARE_VENUE,
-                canonical_symbol,
-                suffix_symbol,
+                canonical_venue,
+                legacy_venue,
+                canonical_symbol.lower(),
+                legacy_symbol.lower(),
             ),
         )
         rows = await cur.fetchall()
         if len(rows) > 1:
             identities = sorted(f"{row['venue']}/{row['symbol']}" for row in rows)
             raise RuntimeError(
-                "duplicate A-share position identities require reconciliation: "
+                f"duplicate {market_label} position identities require reconciliation: "
                 + ", ".join(identities)
             )
         if rows:
@@ -130,7 +140,7 @@ async def apply_fill(
     D-11 增强：``currency`` 记录该持仓的计价货币（``execution.currency_resolver``
     解析），供 ``/accounts/me`` 跨币种 equity 折算。``None`` 时不更新该列（向后兼容）。
     """
-    venue, symbol = await _migrate_legacy_a_share_identity(
+    venue, symbol = await _migrate_legacy_market_identity(
         conn,
         account_id=account_id,
         venue=venue,
@@ -333,7 +343,7 @@ async def get(
     apply_fill 把持仓打成负仓（TOCTOU）。**仅在事务内使用**（行锁随事务释放）。
     """
     if for_update:
-        venue, symbol = await _migrate_legacy_a_share_identity(
+        venue, symbol = await _migrate_legacy_market_identity(
             conn,
             account_id=account_id,
             venue=venue,

@@ -26,6 +26,7 @@ from inalpha_paper.execution.risk_rules.exchange_resolver import resolve_calenda
         ("yfinance", "aapl", "XNYS"),  # 大小写不敏感
         ("alpaca", "TSLA", "XNYS"),
         # yfinance 后缀（注意 .to vs .t 不互相误截）
+        ("yfinance", "0700.HK", "XHKG"),
         ("yfinance", "7203.T", "XTKS"),
         ("yfinance", "005930.KS", "XKRX"),
         ("yfinance", "BHP.AX", "XASX"),
