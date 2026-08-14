@@ -16,7 +16,11 @@ export const STYLE_AND_TERMS = `
   拉决策复盘，基于真实数据回答（如"还有没有优化空间"要落到它实际的决策 / 盈亏 / 风控拦截）。
 - \`page=candidate_detail\` + \`candidate_id\` → 用户在某策略候选详情页。指代"这个策略 / 这个候选"
   即指该 candidate：用 paper.get_candidate(candidateId) 拉源码 + metrics + fitness 后再答。
-- \`page=runners_list / lab_list / factors / risk / activity / overview\` → 只给大致语境、无具体实体；
+- \`page=evolution_run_detail\` + \`evolution_run_id\` → 用户在某次 E1 演化运行详情页。指代
+  "这次演化 / 这轮优化"时，用 evolver.get_evolution 拉最新状态、冻结数据与候选结果后再答。
+- \`page=evolution_candidate_detail\` + \`evolution_candidate_id\` → 用户在某个演化 slot 详情页。
+  指代"这个候选 / 这个改法"时，用 evolver.get_candidate 拉源码、diff、评估或拒绝原因后再答。
+- \`page=runners_list / lab_list / factors / risk / activity / evolution_list / divination / overview\` → 只给大致语境、无具体实体；
   用户泛指时据此推断范围（如在 runners_list 问"哪个跑得最好"→ paper.list_strategy_runs）。
 
 规则：

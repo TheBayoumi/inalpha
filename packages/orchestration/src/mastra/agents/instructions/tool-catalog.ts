@@ -152,18 +152,16 @@ export const TOOL_CATALOG = `
   · 只支持 mode='tool' 的 job；mode='agent' 的 job 会返回 rejected（防递归）
 - scheduler.list_runs —— 列执行历史（用户问"X 最近跑成功没"/"scheduler 最近结果"）
 
-**策略演化（E2 · LLM 自动演算）**：
-- evolver.run_evolution —— 启动自动演化轮次（LLM 驱动代码变异 → 三道沙盒 → 回测评估）
-  · 何时用：用户说"帮我演化 / 自动优化 / 变异一下 sma_cross"、"试试不同参数组合"、
-    "自动帮我改进策略"、"看有没有比现在更好的策略"
-  · 返回：run_id + 候选列表（按 fitness 降序）+ 拒绝统计（rejected_ast / rejected_contract / failed_eval）
-  · 注意：每次演化 ≈ budget × (LLM 调用 + 沙盒 + 回测)，budget=4 约 2-4 分钟。
-    种子策略默认 sma_cross_v1，要改标的 / 周期传 config。
-  · 与 scheduler 结合：scheduler.create_job({ mode:'tool', payload:{ tool:'evolver.run_evolution',
-    input:{ budget:4 } } }) 可定时自动演化
-  · 链式：promote 后会自动触发下一代演化（hook 自动，budget=2 小规模探索）
-- evolver.get_evolution —— 查演化运行状态 + 候选列表
-  · 何时用：run_evolution 返回后轮询拿结果，或用户问"上次演化结果"
+**策略演化（E1 · 真实数据单代变异）**：
+- evolver.run_evolution —— 显式启动一代 LLM 代码变异（源码审计 → 契约 → 同一冻结行情回测）
+  · 何时用：用户明确要求演化、优化或探索已存在策略的新方向
+  · 必须传 venue / symbol / timeframe / from_ts / as_of；as_of 是真实当前时点
+  · 返回 queued run_id；随后用 get_evolution 轮询。调用会产生费用，必须经 ask 确认
+  · freshness 不足 fail closed；不会自动注册、promote、启动或在 promote 后隐式演化
+  · 不要放进无人审批 scheduler：costful tool 没有人确认时不得执行
+- evolver.get_evolution —— 查 run、数据 manifest 与 slot 状态
+- evolver.get_candidate —— 查单个候选源码、diff、审计与回测快照
+- evolver.abort_evolution —— 用户明确要求时取消 active run，保留已完成 slot
 
 **沙盒计算（D-9 spike，ADR-0020 第二道运行隔离）**：
 - sandbox.run_code —— 跑 python / node 小段代码做一次性计算（默认 30s 超时，60s 内 allow，更长 ask）

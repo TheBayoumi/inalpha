@@ -101,6 +101,8 @@ import {
   tradePlanTools,
 } from "./trade-plan.js";
 import {
+  evolverAbortEvolutionTool,
+  evolverGetCandidateTool,
   evolverGetEvolutionTool,
   evolverRunEvolutionTool,
   evolverTools,
@@ -122,6 +124,10 @@ export {
   divinationCastHexagramTool,
   divinationDrawTarotTool,
   executeTradePlanTool,
+  evolverAbortEvolutionTool,
+  evolverGetCandidateTool,
+  evolverGetEvolutionTool,
+  evolverRunEvolutionTool,
   factorCatalogTool,
   factorEvaluateCandidateTool,
   factorListCandidatesTool,
@@ -334,9 +340,11 @@ export const orchestratorToolList = [
   // 玄学彩蛋（六爻 / 塔罗）—— 仅用户明确点名时召唤，输出禁入决策
   divinationCastHexagramTool,
   divinationDrawTarotTool,
-  // E2 演化引擎（LLM 驱动策略变异 + 沙盒 + 评估）
+  // E1 演化引擎（显式单代变异 + 真实冻结数据评估）
   evolverRunEvolutionTool,
   evolverGetEvolutionTool,
+  evolverGetCandidateTool,
+  evolverAbortEvolutionTool,
 ] as const;
 
 /** 名字 → tool 索引，给 framework 路由用。 */
