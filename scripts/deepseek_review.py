@@ -121,8 +121,8 @@ def _call_deepseek(api_key: str, title: str, diff: str, rules: str) -> str:
             },
         ],
         "temperature": 0.1,
-        # V4 Pro 会把 reasoning tokens 计入 completion；4096 会在输出正文前耗尽。
-        "max_tokens": 16384,
+        # V4 Pro 会把 reasoning tokens 计入 completion；大 diff 下 16384 也可能在正文前耗尽。
+        "max_tokens": 32768,
     }
     for attempt in range(MAX_ATTEMPTS):
         req = urllib.request.Request(
@@ -144,6 +144,18 @@ def _call_deepseek(api_key: str, title: str, diff: str, rules: str) -> str:
         content = body["choices"][0]["message"].get("content")
         if _is_valid_review(content):
             return content.strip()
+        choice = body["choices"][0]
+        usage = body.get("usage", {})
+        reasoning_tokens = usage.get("completion_tokens_details", {}).get(
+            "reasoning_tokens", "unknown"
+        )
+        print(
+            "deepseek_review: invalid response "
+            f"attempt={attempt + 1} finish_reason={choice.get('finish_reason')} "
+            f"content_chars={len(content) if isinstance(content, str) else 0} "
+            f"reasoning_tokens={reasoning_tokens}",
+            file=sys.stderr,
+        )
         if attempt + 1 < MAX_ATTEMPTS:
             payload["messages"].append(
                 {

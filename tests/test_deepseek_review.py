@@ -70,7 +70,7 @@ class DeepSeekReviewTest(unittest.TestCase):
         self.assertEqual(request.full_url, "https://api.deepseek.com/v1/chat/completions")
         self.assertEqual(request.get_header("Authorization"), "Bearer secret-value")
         self.assertEqual(payload["model"], "deepseek-v4-pro")
-        self.assertEqual(payload["max_tokens"], 16384)
+        self.assertEqual(payload["max_tokens"], 32768)
         self.assertIn("## 项目规则（CLAUDE.md）\nproject rules", payload["messages"][1]["content"])
         self.assertEqual(captured["timeout"], module.TIMEOUT_S)
 
