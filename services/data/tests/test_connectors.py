@@ -324,11 +324,11 @@ def test_baostock_ticker_timeout_keeps_lock_until_thread_exits(monkeypatch) -> N
         with pytest.raises(RuntimeError, match="A-share ticker unavailable"):
             await connector.fetch_ticker("sh.000001")
         assert first_started.is_set()
-        second = asyncio.create_task(connector.fetch_ticker("sz.000002"))
-        await asyncio.sleep(0.01)
+        with pytest.raises(RuntimeError, match="A-share ticker unavailable"):
+            await connector.fetch_ticker("sz.000002")
         assert max_active == 1
         release_first.set()
-        return (await second)[1]
+        return (await connector.fetch_ticker("sz.000002"))[1]
 
     assert asyncio.run(_run()) == 2.0
     assert max_active == 1
