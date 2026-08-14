@@ -27,6 +27,62 @@ from uuid import UUID
 
 from psycopg import AsyncConnection
 
+from ..market_identity import (
+    A_SHARE_VENUE,
+    LEGACY_A_SHARE_VENUE,
+    a_share_identity_variants,
+)
+
+
+async def _migrate_legacy_a_share_identity(
+    conn: AsyncConnection,
+    *,
+    account_id: UUID,
+    venue: str,
+    symbol: str,
+) -> tuple[str, str]:
+    """锁住单个旧 A 股仓位并迁到 canonical key；重复 key 时 fail-closed。"""
+    variants = a_share_identity_variants(venue, symbol)
+    if variants is None:
+        return venue, symbol
+    canonical_venue, canonical_symbol, suffix_symbol = variants
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "SELECT venue, symbol FROM positions WHERE account_id = %s "
+            "AND LOWER(BTRIM(venue)) IN (%s, %s) "
+            "AND LOWER(BTRIM(symbol)) IN (%s, %s) FOR UPDATE",
+            (
+                str(account_id),
+                A_SHARE_VENUE,
+                LEGACY_A_SHARE_VENUE,
+                canonical_symbol,
+                suffix_symbol,
+            ),
+        )
+        rows = await cur.fetchall()
+        if len(rows) > 1:
+            identities = sorted(f"{row['venue']}/{row['symbol']}" for row in rows)
+            raise RuntimeError(
+                "duplicate A-share position identities require reconciliation: "
+                + ", ".join(identities)
+            )
+        if rows:
+            stored_venue = rows[0]["venue"]
+            stored_symbol = rows[0]["symbol"]
+            if (stored_venue, stored_symbol) != (canonical_venue, canonical_symbol):
+                await cur.execute(
+                    "UPDATE positions SET venue = %s, symbol = %s, updated_at = NOW() "
+                    "WHERE account_id = %s AND venue = %s AND symbol = %s",
+                    (
+                        canonical_venue,
+                        canonical_symbol,
+                        str(account_id),
+                        stored_venue,
+                        stored_symbol,
+                    ),
+                )
+    return canonical_venue, canonical_symbol
+
 
 @dataclass(frozen=True, slots=True)
 class ClosedTradeInfo:
@@ -74,6 +130,13 @@ async def apply_fill(
     D-11 增强：``currency`` 记录该持仓的计价货币（``execution.currency_resolver``
     解析），供 ``/accounts/me`` 跨币种 equity 折算。``None`` 时不更新该列（向后兼容）。
     """
+    venue, symbol = await _migrate_legacy_a_share_identity(
+        conn,
+        account_id=account_id,
+        venue=venue,
+        symbol=symbol,
+    )
+
     # 1. 读当前持仓（不存在视为 flat）
     async with conn.cursor() as cur:
         await cur.execute(
@@ -269,6 +332,13 @@ async def get(
     "读-检-写"必须在同一事务里 FOR UPDATE，否则并发 SELL 各自读到旧持仓双双过闸、
     apply_fill 把持仓打成负仓（TOCTOU）。**仅在事务内使用**（行锁随事务释放）。
     """
+    if for_update:
+        venue, symbol = await _migrate_legacy_a_share_identity(
+            conn,
+            account_id=account_id,
+            venue=venue,
+            symbol=symbol,
+        )
     sql = (
         "SELECT venue, symbol, quantity, avg_open_price, realized_pnl, "
         "generation, ts_opened, open_order_id, currency, updated_at, "
