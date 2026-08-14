@@ -97,6 +97,27 @@ class DataClient:
             )
         return result
 
+    async def get_execution_ticker(
+        self,
+        *,
+        venue: str,
+        symbol: str,
+    ) -> dict[str, Any]:
+        """获取交易执行报价；陈旧或缺少 freshness 标记时 fail-closed。"""
+        ticker = await self.get_ticker(venue=venue, symbol=symbol, fresh=True)
+        if ticker.get("is_stale") is not False:
+            raise DataServiceError(
+                f"stale ticker for {symbol}@{venue}",
+                code="STALE_TICKER",
+                details={
+                    "venue": venue,
+                    "symbol": symbol,
+                    "ts": ticker.get("ts"),
+                    "stale_seconds": ticker.get("stale_seconds"),
+                },
+            )
+        return ticker
+
     async def get_perp_funding(self, *, venue: str, symbol: str) -> dict[str, Any]:
         """``GET /perp/funding`` —— USDT-M 永续 mark price + 当期 funding rate(perp 记账用)。
 

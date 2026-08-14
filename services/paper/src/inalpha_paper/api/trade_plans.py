@@ -261,10 +261,9 @@ async def execute_plan(
     user_token = authorization.removeprefix("Bearer ").strip()
     async with DataClient(settings.data_service_url, user_token) as data_client:
         try:
-            ticker = await data_client.get_ticker(
+            ticker = await data_client.get_execution_ticker(
                 venue=venue,
                 symbol=symbol,
-                fresh=True,
             )
         except Exception as e:
             raise PlanHttpError(

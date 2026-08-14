@@ -16,7 +16,13 @@ pytestmark = pytest.mark.integration
 
 
 def _ticker_response(
-    *, venue: str, symbol: str, price: float, source: str
+    *,
+    venue: str,
+    symbol: str,
+    price: float,
+    source: str,
+    is_stale: bool = False,
+    stale_seconds: int = 1,
 ) -> dict[str, Any]:
     """构造 data-service 的完整 ticker 响应。"""
     return {
@@ -25,8 +31,8 @@ def _ticker_response(
         "price": price,
         "ts": "2026-08-13T02:20:00Z",
         "source": source,
-        "is_stale": False,
-        "stale_seconds": 1,
+        "is_stale": is_stale,
+        "stale_seconds": stale_seconds,
     }
 
 
@@ -106,8 +112,76 @@ def test_submit_order_without_ref_price_requests_fresh_ticker(
 
 
 @respx.mock
+def test_submit_order_rejects_stale_execution_ticker(client: TestClient) -> None:
+    """交易执行不得把 data 明确标记的陈旧报价当作成交价。"""
+    _, token = fresh_account_token("stale-order")
+    route = respx.get(
+        "http://data-mock.test/ticker",
+        params={"venue": "binance", "symbol": "BTC/USDT", "fresh": "true"},
+    ).mock(
+        return_value=Response(
+            200,
+            json=_ticker_response(
+                venue="binance",
+                symbol="BTC/USDT",
+                price=50_000.0,
+                source="binance_ticker",
+                is_stale=True,
+                stale_seconds=900,
+            ),
+        )
+    )
+
+    response = client.post(
+        "/orders/submit",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "venue": "binance",
+            "symbol": "BTC/USDT",
+            "side": "BUY",
+            "type": "MARKET",
+            "quantity": 0.01,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "REF_PRICE_UNAVAILABLE"
+    assert route.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "first_response",
+    [
+        pytest.param(
+            Response(
+                404,
+                json={
+                    "code": "NO_PRICE_AVAILABLE",
+                    "message": "no cached or live price available",
+                },
+            ),
+            id="unavailable",
+        ),
+        pytest.param(
+            Response(
+                200,
+                json=_ticker_response(
+                    venue="baostock",
+                    symbol="sh.600519",
+                    price=1_415.0,
+                    source="baostock_ticker",
+                    is_stale=True,
+                    stale_seconds=900,
+                ),
+            ),
+            id="stale",
+        ),
+    ],
+)
+@respx.mock
 def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
     client: TestClient,
+    first_response: Response,
 ) -> None:
     """A 股报价失败不消费 token，恢复后同一 plan 可按 fresh ticker 成交。"""
     _, token = fresh_account_token("fresh-a-share-plan")
@@ -117,13 +191,7 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
         params={"venue": "baostock", "symbol": "sh.600519", "fresh": "true"},
     ).mock(
         side_effect=[
-            Response(
-                404,
-                json={
-                    "code": "NO_PRICE_AVAILABLE",
-                    "message": "no cached or live price available",
-                },
-            ),
+            first_response,
             Response(
                 200,
                 json=_ticker_response(
