@@ -528,53 +528,76 @@ export interface ActivityPayload {
   asOf: string;
 }
 
-// ── E2 策略演化 ──
+// ── E1 策略演化 ──
 
-/** 演化运行中的候选摘要（对应 evolver CandidateResponse）。 */
+export type EvolutionRunStatus =
+  | "queued"
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "aborted";
+
 export interface EvolutionCandidateSummary {
   candidate_id: string;
   run_id: string;
+  slot: number;
   generation: number;
-  parent_id: string | null;
-  source_hash: string;
+  stage: string;
+  outcome: string;
+  source_code: string | null;
+  source_hash: string | null;
+  unified_diff: string | null;
   mutation_hint: string | null;
+  llm_cost_usd: number | null;
   fitness: number | null;
-  report: Record<string, unknown> | null;
+  evaluation_snapshot: Record<string, unknown> | null;
+  audit_snapshot: Record<string, unknown> | null;
+  contract_snapshot: Record<string, unknown> | null;
+  error_code: string | null;
+  error_message: string | null;
   overfitting_risk: string;
-  status: string;
   created_at: string | null;
+  updated_at: string | null;
 }
 
-/** 演化运行摘要（对应 evolver RunStatusResponse，不含候选列表）。 */
 export interface EvolutionRunSummary {
   run_id: string;
   seed_strategy_id: string;
   budget: number;
-  config: Record<string, unknown> | null;
-  status: string;
+  config: Record<string, unknown>;
+  status: EvolutionRunStatus;
+  active_stage: string | null;
   llm_cost_usd: number;
-  candidates_count: number;
-  rejected_ast: number;
-  rejected_contract: number;
-  failed_eval: number;
+  queued_at: string;
   started_at: string | null;
   finished_at: string | null;
+  dataset_manifest: Record<string, unknown> | null;
+  seed_report_snapshot: Record<string, unknown> | null;
+  baseline_snapshot: Record<string, unknown> | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  attempted: number;
+  succeeded: number;
+  rejected: number;
 }
 
-/** 演化运行详情=摘要 + 全部候选列表。 */
 export interface EvolutionRun extends EvolutionRunSummary {
   candidates: EvolutionCandidateSummary[];
 }
 
-/** GET /api/evolution —— 演化运行列表负载。 */
 export interface EvolutionPayload {
   runs: EvolutionRunSummary[];
-  truncated: boolean;
+  nextCursor: string | null;
   asOf: string;
 }
 
-/** GET /api/evolution/[runId] —— 单个演化运行详情负载。 */
 export interface EvolutionRunDetailPayload {
-  run: EvolutionRun | null;
+  run: EvolutionRun;
+  asOf: string;
+}
+
+export interface EvolutionCandidateDetailPayload {
+  candidate: EvolutionCandidateSummary;
   asOf: string;
 }

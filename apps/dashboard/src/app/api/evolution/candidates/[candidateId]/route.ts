@@ -2,29 +2,31 @@ import { NextResponse } from "next/server";
 
 import { backendFetch, BackendError } from "@/lib/backend";
 import { isEvolutionEnabled } from "@/lib/evolution-capability";
-import type { EvolutionPayload, EvolutionRunSummary } from "@/lib/types";
+import type { EvolutionCandidateDetailPayload, EvolutionCandidateSummary } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-type RunsResponse = { items: EvolutionRunSummary[]; next_cursor: string | null };
-
-export async function GET(request: Request) {
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ candidateId: string }> },
+) {
   if (!isEvolutionEnabled()) {
     return NextResponse.json(
       { error: "evolution service is not enabled", code: "EVOLUTION_SERVICE_DISABLED" },
       { status: 503 },
     );
   }
-  const { searchParams } = new URL(request.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? 50), 50);
+  const { candidateId } = await params;
+  const valid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidateId);
+  if (!valid) return NextResponse.json({ error: "invalid candidate id" }, { status: 400 });
   try {
-    const raw = await backendFetch<RunsResponse>("evolver", "/api/v1/runs", {
-      query: { limit, cursor: searchParams.get("cursor") ?? undefined },
-      timeoutMs: 5000,
-    });
-    const payload: EvolutionPayload = {
-      runs: raw.items,
-      nextCursor: raw.next_cursor,
+    const candidate = await backendFetch<EvolutionCandidateSummary>(
+      "evolver",
+      `/api/v1/candidates/${candidateId}`,
+      { timeoutMs: 5000 },
+    );
+    const payload: EvolutionCandidateDetailPayload = {
+      candidate,
       asOf: new Date().toISOString(),
     };
     return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
