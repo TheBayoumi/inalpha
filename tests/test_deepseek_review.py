@@ -24,8 +24,9 @@ def _load_module():
 
 
 class _FakeResponse:
-    def __init__(self, content: str = "LGTM") -> None:
+    def __init__(self, content: str = "LGTM", finish_reason: str = "stop") -> None:
         self._content = content
+        self._finish_reason = finish_reason
 
     def __enter__(self):
         return self
@@ -35,7 +36,14 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(
-            {"choices": [{"message": {"content": self._content}}]}
+            {
+                "choices": [
+                    {
+                        "finish_reason": self._finish_reason,
+                        "message": {"content": self._content},
+                    }
+                ]
+            }
         ).encode()
 
 
@@ -73,6 +81,25 @@ class DeepSeekReviewTest(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 32768)
         self.assertIn("## 项目规则（CLAUDE.md）\nproject rules", payload["messages"][1]["content"])
         self.assertEqual(captured["timeout"], module.TIMEOUT_S)
+
+    def test_truncated_content_retries_instead_of_publishing_partial_review(self) -> None:
+        module = _load_module()
+        responses = [
+            _FakeResponse("未完成的 finding", finish_reason="length"),
+            _FakeResponse("完整 review"),
+        ]
+
+        with patch.object(
+            module.urllib.request,
+            "urlopen",
+            side_effect=responses,
+        ) as urlopen:
+            result = module._call_deepseek(
+                "secret-value", "PR title", "diff body", "project rules"
+            )
+
+        self.assertEqual(result, "完整 review")
+        self.assertEqual(urlopen.call_count, 2)
 
     def test_empty_content_retries_then_returns_review(self) -> None:
         module = _load_module()
