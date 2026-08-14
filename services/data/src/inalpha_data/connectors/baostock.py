@@ -288,12 +288,25 @@ class BaostockConnector:
         """从腾讯财经实时行情接口返回最新报价时间和价格。"""
         prefix, code = _parse_symbol(symbol)
         try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(_fetch_tencent_ticker_sync, symbol=f"{prefix}.{code}"),
-                timeout=_FETCH_TIMEOUT_S,
-            )
+            return await self._throttled_fetch_ticker_sync(symbol=f"{prefix}.{code}")
         except Exception as exc:
             raise RuntimeError(f"A-share ticker unavailable for {symbol}: {exc}") from exc
+
+    @staticmethod
+    async def _throttled_fetch_ticker_sync(*, symbol: str) -> tuple[datetime, float]:
+        """让实时 ticker 与 K 线请求共用腾讯源站串行限流。"""
+        global _last_fetch_mono
+        async with _FETCH_LOCK:
+            try:
+                wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
+                if wait > 0:
+                    await asyncio.sleep(wait)
+                return await asyncio.wait_for(
+                    asyncio.to_thread(_fetch_tencent_ticker_sync, symbol=symbol),
+                    timeout=_FETCH_TIMEOUT_S,
+                )
+            finally:
+                _last_fetch_mono = time.monotonic()
 
     @staticmethod
     async def _throttled_fetch_sync(
