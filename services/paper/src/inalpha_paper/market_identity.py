@@ -18,6 +18,21 @@ def canonicalize_market_identity(venue: str, symbol: str) -> tuple[str, str]:
     return normalized_venue, symbol.strip()
 
 
+def a_share_identity_variants(
+    venue: str,
+    symbol: str,
+) -> tuple[str, str, str] | None:
+    """返回 canonical identity 与另一种前后缀 symbol；非 A 股返回 ``None``。"""
+    normalized_venue = venue.strip().lower()
+    normalized_symbol = _canonicalize_a_share_symbol(symbol)
+    if normalized_venue not in {LEGACY_A_SHARE_VENUE, A_SHARE_VENUE}:
+        return None
+    if normalized_symbol is None:
+        return None
+    prefix, code = normalized_symbol.split(".", 1)
+    return A_SHARE_VENUE, normalized_symbol, f"{code}.{prefix}"
+
+
 def _canonicalize_a_share_symbol(symbol: str) -> str | None:
     """把 ``SH.600519`` / ``600519.SH`` 归一为 ``sh.600519``。"""
     normalized = symbol.strip()

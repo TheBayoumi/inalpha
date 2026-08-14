@@ -99,6 +99,61 @@ def test_trade_request_schemas_canonicalize_a_share_identity() -> None:
     assert (plan.venue, plan.symbol) == ("baostock", "sz.000001")
 
 
+def test_submit_sell_migrates_single_legacy_a_share_position(client: TestClient) -> None:
+    """升级前旧 key 的持仓仍能被 canonical SELL 找到并平仓。"""
+    import asyncio
+    from decimal import Decimal
+
+    from inalpha_shared.db import get_conn
+
+    from inalpha_paper.account_id import account_id_from_sub
+    from inalpha_paper.storage import accounts as accounts_store
+
+    sub, token = fresh_account_token("legacy-a-share-position")
+    account_id = account_id_from_sub(sub)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def _seed_legacy_position() -> None:
+        async with get_conn() as conn:
+            await accounts_store.get_or_create(conn, account_id)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO positions ("
+                    "account_id, venue, symbol, quantity, avg_open_price, "
+                    "realized_pnl, generation, currency, updated_at"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())",
+                    (
+                        str(account_id),
+                        "akshare",
+                        "600519.SH",
+                        Decimal("1"),
+                        Decimal("1415"),
+                        Decimal("0"),
+                        1,
+                        "CNY",
+                    ),
+                )
+
+    asyncio.run(_seed_legacy_position())
+
+    response = client.post(
+        "/orders/submit",
+        headers=headers,
+        json={
+            "venue": "baostock",
+            "symbol": "sh.600519",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": 1,
+            "ref_price": 1_415.0,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "FILLED"
+    assert client.get("/positions", headers=headers).json() == []
+
+
 @respx.mock
 def test_submit_order_without_ref_price_requests_fresh_ticker(
     client: TestClient,
@@ -212,6 +267,10 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
     first_response: Response,
 ) -> None:
     """A 股报价失败不消费 token，恢复后同一 plan 可按 fresh ticker 成交。"""
+    import asyncio
+
+    from inalpha_shared.db import get_conn
+
     _, token = fresh_account_token("fresh-a-share-plan")
     headers = {"Authorization": f"Bearer {token}"}
     route = respx.get(
@@ -253,6 +312,16 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
         "sh.600519",
     )
     plan_id = created_body["plan_id"]
+
+    async def _rewrite_as_legacy_plan() -> None:
+        async with get_conn() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "UPDATE trade_plans SET venue = %s, symbol = %s WHERE plan_id = %s",
+                    ("akshare", "600519.SH", plan_id),
+                )
+
+    asyncio.run(_rewrite_as_legacy_plan())
 
     approved = client.post(
         f"/plans/{plan_id}/approve",

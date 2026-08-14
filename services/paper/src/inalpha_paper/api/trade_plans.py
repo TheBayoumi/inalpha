@@ -30,6 +30,7 @@ from ..data_client import DataClient
 from ..execution import risk_guard as risk_guard_mod
 from ..execution.order_executor import OrderExecutor
 from ..fills import apply_fill_to_positions_and_cash
+from ..market_identity import canonicalize_market_identity
 from ..schemas import (
     ApprovePlanRequest,
     CreatePlanRequest,
@@ -234,8 +235,10 @@ async def execute_plan(
         )
 
     order_params: dict[str, Any] = plan_row["order_params"]
-    venue: str = plan_row["venue"]
-    symbol: str = plan_row["symbol"]
+    venue, symbol = canonicalize_market_identity(
+        plan_row["venue"],
+        plan_row["symbol"],
+    )
     side: str = order_params["side"]
     order_type: str = order_params["type"]
     quantity: float = float(order_params["quantity"])
