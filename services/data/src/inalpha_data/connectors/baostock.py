@@ -301,10 +301,19 @@ class BaostockConnector:
                 wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
                 if wait > 0:
                     await asyncio.sleep(wait)
-                return await asyncio.wait_for(
-                    asyncio.to_thread(_fetch_tencent_ticker_sync, symbol=symbol),
-                    timeout=_FETCH_TIMEOUT_S,
+                worker = asyncio.create_task(
+                    asyncio.to_thread(_fetch_tencent_ticker_sync, symbol=symbol)
                 )
+                try:
+                    return await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    # to_thread 无法终止；等线程真正退出再释放源站锁，避免超时/断连后
+                    # 下一请求与后台残留请求并发。
+                    try:
+                        await worker
+                    except Exception:
+                        pass
+                    raise
             finally:
                 _last_fetch_mono = time.monotonic()
 

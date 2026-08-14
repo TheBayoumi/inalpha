@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from datetime import UTC, datetime
 
@@ -248,6 +249,48 @@ def test_baostock_fetch_ticker_serializes_tencent_requests(monkeypatch) -> None:
     results = asyncio.run(_run())
     assert max_active == 1
     assert [price for _, price in results] == [1.0, 2.0]
+
+
+def test_baostock_cancelled_ticker_holds_lock_until_thread_exits(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """caller 取消不能提前放锁，让仍在运行的 to_thread 与下一请求重叠。"""
+    from inalpha_data.connectors import baostock as baostock_mod
+    from inalpha_data.connectors.baostock import BaostockConnector
+
+    active = 0
+    max_active = 0
+    first_started = threading.Event()
+    release_first = threading.Event()
+
+    def _fake_fetch(*, symbol: str) -> tuple[datetime, float]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if symbol == "sh.000001":
+            first_started.set()
+            release_first.wait(timeout=1)
+        active -= 1
+        return datetime(2026, 7, 22, 7, 0, tzinfo=UTC), float(symbol[-1])
+
+    monkeypatch.setattr(baostock_mod, "_FETCH_LOCK", asyncio.Lock())
+    monkeypatch.setattr(baostock_mod, "_MIN_FETCH_INTERVAL_S", 0.0)
+    monkeypatch.setattr(baostock_mod, "_last_fetch_mono", 0.0)
+    monkeypatch.setattr(baostock_mod, "_fetch_tencent_ticker_sync", _fake_fetch)
+
+    async def _run() -> float:
+        connector = BaostockConnector()
+        first = asyncio.create_task(connector.fetch_ticker("sh.000001"))
+        assert await asyncio.to_thread(first_started.wait, 1)
+        first.cancel()
+        second = asyncio.create_task(connector.fetch_ticker("sz.000002"))
+        await asyncio.sleep(0.01)
+        assert max_active == 1
+        release_first.set()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        return (await second)[1]
+
+    assert asyncio.run(_run()) == 2.0
+    assert max_active == 1
 
 
 @pytest.mark.parametrize(
