@@ -90,6 +90,11 @@ def _worker_init(cpu_soft: int, mem_bytes: int) -> None:
     _set_rlimits(cpu_soft=cpu_soft, mem_bytes=mem_bytes)
 
 
+def configure_worker_limits(cpu_soft: int, mem_bytes: int) -> None:
+    """为一次性回测子进程配置资源上限。"""
+    _worker_init(cpu_soft, mem_bytes)
+
+
 def _noop() -> int:
     """预热任务：让 worker 完成 fork + import inalpha_paper 一次。返进程号给 sanity check。"""
     return os.getpid()

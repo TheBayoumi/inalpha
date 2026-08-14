@@ -139,6 +139,7 @@ class BacktestReport:
         period_start: datetime | None,
         period_end: datetime | None,
         timeframe: str,
+        annualization_periods: int | None = None,
     ) -> BacktestReport:
         """从 ``Portfolio`` 状态 + 元数据构造完整报告。
 
@@ -148,7 +149,7 @@ class BacktestReport:
         equity_curve = portfolio.equity_curve
         equity_values = [eq for _ts, eq in equity_curve]
         returns = metrics.bar_returns(equity_values)
-        ppy = metrics.periods_per_year(timeframe)
+        ppy = annualization_periods or metrics.periods_per_year(timeframe)
         final_equity_v = portfolio.equity()
         final_cash_v = portfolio.cash
 
