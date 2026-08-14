@@ -43,6 +43,25 @@ class EvolverSettings(BaseSettings):
         le=8,
         description="单个回测子进程的内存上限（GB）。",
     )
+    evolver_max_running_runs: int = Field(
+        default=1,
+        alias="EVOLVER_MAX_RUNNING_RUNS",
+        ge=1,
+        le=8,
+    )
+    evolver_account_active_limit: int = Field(
+        default=2,
+        alias="EVOLVER_ACCOUNT_ACTIVE_LIMIT",
+        ge=1,
+        le=20,
+    )
+    data_service_url: str = Field(
+        default="http://127.0.0.1:8001",
+        alias="DATA_SERVICE_URL",
+    )
+    jwt_secret: str = Field(default="dev-secret", alias="JWT_SECRET")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    service_token_ttl_s: int = Field(default=3600, ge=60, le=86400)
 
     # ---- LLM ----
     llm_api_key: str = Field(

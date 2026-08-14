@@ -73,7 +73,7 @@ def apply_diff(
     ):
         i += 1
 
-    if not any(l.startswith("@@") for l in diff_lines):
+    if not any(line.startswith("@@") for line in diff_lines):
         raise DiffApplyError(
             "unified diff 不包含任何 hunk",
             original=original, failed_diff=unified_diff,
@@ -96,15 +96,15 @@ def apply_diff(
         # 收集 hunk body
         hunk_body: list[tuple[str, str]] = []
         while i < len(diff_lines):
-            l = diff_lines[i]
-            if l.startswith("@@"):
+            line = diff_lines[i]
+            if line.startswith("@@"):
                 break
-            if l.startswith(" "):
-                hunk_body.append(("context", l[1:]))
-            elif l.startswith("-"):
-                hunk_body.append(("removed", l[1:]))
-            elif l.startswith("+"):
-                hunk_body.append(("added", l[1:]))
+            if line.startswith(" "):
+                hunk_body.append(("context", line[1:]))
+            elif line.startswith("-"):
+                hunk_body.append(("removed", line[1:]))
+            elif line.startswith("+"):
+                hunk_body.append(("added", line[1:]))
             i += 1
 
         if not hunk_body:
@@ -125,8 +125,8 @@ def apply_diff(
         tgt_lines = [t for kind, t in hunk_body if kind in ("context", "added")]
 
         # 转换回带 \n 的格式以匹配源文件
-        src_with_nl = [l + "\n" if not l.endswith("\n") else l for l in src_lines]
-        tgt_with_nl = [l + "\n" if not l.endswith("\n") else l for l in tgt_lines]
+        src_with_nl = [line + "\n" if not line.endswith("\n") else line for line in src_lines]
+        tgt_with_nl = [line + "\n" if not line.endswith("\n") else line for line in tgt_lines]
 
         lines = lines[:pos] + tgt_with_nl + lines[pos + len(src_with_nl):]
 
@@ -148,8 +148,8 @@ def _find_hunk_position(
     if not src_lines:
         return None
 
-    lines_stripped = [l.rstrip("\n") for l in lines]
-    src_stripped = [l.rstrip("\n") if l.endswith("\n") else l for l in src_lines]
+    lines_stripped = [line.rstrip("\n") for line in lines]
+    src_stripped = [line.rstrip("\n") if line.endswith("\n") else line for line in src_lines]
 
     # 1. header 行号 ± fuzz
     start = max(0, old_start - 1)

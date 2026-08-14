@@ -1,77 +1,78 @@
-"""E2E 测试 —— 完整闭环。
-
-测试策略（E1 不接真实 DB/LLM）：
-1. POST /runs { budget: 2 } 返回 202
-2. 响应体含 run_id + 正确状态
-3. GET /runs/{id} 返回状态
-"""
+"""Evolver API DB/auth 契约测试。"""
 from __future__ import annotations
 
+import os
+import time
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from inalpha_evolver.config import get_evolver_settings
 from inalpha_evolver.main import app
 
+_SECRET = "evolver-test-secret-at-least-32-bytes-long"
 
-@pytest.fixture
+
+def _headers(key: str | None = None) -> dict[str, str]:
+    token = jwt.encode(
+        {"sub": f"test:{uuid4()}", "exp": int(time.time()) + 3600},
+        _SECRET,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    if key:
+        headers["Idempotency-Key"] = key
+    return headers
+
+
+@pytest.fixture(scope="module")
 def client() -> TestClient:
-    return TestClient(app)
+    os.environ["DATABASE_URL"] = os.environ.get(
+        "EVOLVER_TEST_DATABASE_URL",
+        "postgresql+psycopg://quant:devpass@localhost:5433/inalpha_evo_test",
+    )
+    os.environ["JWT_SECRET"] = _SECRET
+    get_evolver_settings.cache_clear()
+    with TestClient(app) as value:
+        yield value
+    get_evolver_settings.cache_clear()
 
 
-def test_health_check(client: TestClient) -> None:
-    """健康检查端点。"""
-    response = client.get("/health")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["service"] == "inalpha-evolver"
-
-
-def test_start_run(client: TestClient) -> None:
-    """POST /runs 启动演化。"""
-    payload = {
+def _payload() -> dict:
+    now = datetime.now(UTC)
+    return {
         "seed_strategy_id": "sma_cross_v1",
-        "budget": 2,
+        "budget": 1,
         "config": {
-            "universe": ["BTCUSDT"],
-            "period_from": "2025-01-01",
-            "period_to": "2025-12-31",
+            "venue": "binance",
+            "symbol": "BTCUSDT",
             "timeframe": "1h",
-            "initial_cash": 10000.0,
+            "from_ts": (now - timedelta(days=1)).isoformat(),
+            "as_of": now.isoformat(),
+            "initial_cash": 10_000,
         },
     }
-    response = client.post("/api/v1/runs", json=payload)
-    assert response.status_code == 202
-    data = response.json()
-    assert "run_id" in data
-    assert data["status"] in ("completed", "failed")
-    assert data["budget"] == 2
 
 
-def test_start_run_minimal(client: TestClient) -> None:
-    """POST /runs 最少参数。"""
-    response = client.post("/api/v1/runs", json={})
-    assert response.status_code == 202
-    data = response.json()
-    assert data["status"] in ("completed", "failed")
-    assert data["budget"] == 4  # 默认
+def test_business_endpoints_require_auth(client: TestClient) -> None:
+    assert client.get("/api/v1/runs").status_code == 401
 
 
-def test_get_run(client: TestClient) -> None:
-    """GET /runs/{id} 返回正确状态。"""
-    # 先启动一个 run
-    resp = client.post("/api/v1/runs", json={"budget": 1})
-    assert resp.status_code == 202
-    run_id = resp.json()["run_id"]
-
-    # 再查询
-    resp2 = client.get(f"/api/v1/runs/{run_id}")
-    assert resp2.status_code == 200
-    assert resp2.json()["run_id"] == run_id
+def test_start_requires_idempotency_key(client: TestClient) -> None:
+    assert client.post("/api/v1/runs", json=_payload(), headers=_headers()).status_code == 400
 
 
-def test_get_nonexistent_run(client: TestClient) -> None:
-    """GET /runs/{id} 不存在时返回 404。"""
-    import uuid
+def test_start_returns_queued_and_is_idempotent(client: TestClient) -> None:
+    key = f"api-test-{uuid4()}"
+    headers = _headers(key)
+    payload = _payload()
+    first = client.post("/api/v1/runs", json=payload, headers=headers)
+    second = client.post("/api/v1/runs", json=payload, headers=headers)
 
-    resp = client.get(f"/api/v1/runs/{uuid.uuid4()}")
-    assert resp.status_code == 404
+    assert first.status_code == 202
+    assert first.json()["status"] == "queued"
+    assert second.status_code == 202
+    assert second.json()["run_id"] == first.json()["run_id"]

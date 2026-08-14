@@ -1,0 +1,82 @@
+"""queued run 的数据加载、评估器构建与执行。"""
+from __future__ import annotations
+
+import asyncio
+import time
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
+import jwt
+from inalpha_paper.data_client import DataClient
+from inalpha_paper.evaluation_executor import KillableEngineRunner
+from inalpha_shared.db import get_conn
+
+from ..config import EvolverSettings
+from ..data import FrozenBarsLoader
+from ..evaluator import FrozenDatasetEvaluator
+from ..storage import runs
+from .generation import execute_generation
+
+
+async def execute_run(
+    run: dict[str, Any],
+    *,
+    mutator: Any,
+    settings: EvolverSettings,
+) -> None:
+    config = _parse_config(run["config"])
+    run = {**run, "config": config}
+    token = _service_token(run["owner_account_id"], settings)
+    async with DataClient(settings.data_service_url, token) as client:
+        dataset = await FrozenBarsLoader(client).load(
+            venue=config["venue"],
+            symbol=config["symbol"],
+            timeframe=config["timeframe"],
+            from_ts=config["from_ts"],
+            as_of=config["as_of"],
+        )
+    async with get_conn() as conn:
+        current = await runs.transition(
+            conn,
+            run["run_id"],
+            from_statuses=("running",),
+            to_status="running",
+            values={
+                "data_timeframe": dataset.manifest.data_timeframe,
+                "engine_timeframe": dataset.manifest.canonical_timeframe,
+                "dataset_manifest": dataset.manifest.model_dump(mode="json"),
+                "active_stage": "evaluating_seed",
+            },
+        )
+    if current is None:
+        raise asyncio.CancelledError
+    evaluator = FrozenDatasetEvaluator(
+        dataset=dataset,
+        runner=KillableEngineRunner(
+            timeout_s=settings.evolver_job_timeout_s,
+            mem_gb=settings.evolver_job_mem_gb,
+        ),
+        initial_cash=float(config["initial_cash"]),
+        fee_rate=float(config.get("fee_rate", 0.001)),
+        validation_split=float(config.get("validation_split", 0.3)),
+    )
+    await execute_generation(run, mutator=mutator, evaluator=evaluator)
+
+
+def _parse_config(config: dict[str, Any]) -> dict[str, Any]:
+    """把 JSONB 中的 ISO 时间恢复为 loader 所需的 datetime。"""
+    parsed = dict(config)
+    for key in ("from_ts", "as_of"):
+        value = parsed.get(key)
+        if isinstance(value, str):
+            parsed[key] = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed
+
+
+def _service_token(account_id: UUID, settings: EvolverSettings) -> str:
+    return jwt.encode(
+        {"sub": str(account_id), "exp": int(time.time()) + settings.service_token_ttl_s},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )

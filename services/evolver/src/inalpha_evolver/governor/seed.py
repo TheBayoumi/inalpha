@@ -8,13 +8,6 @@ from __future__ import annotations
 from typing import Final
 
 SEED_STRATEGY_CODE: Final[str] = """
-from collections import deque
-from uuid import uuid4
-
-from inalpha_paper.model.orders import Order, OrderSide, OrderType, ClientOrderId
-from inalpha_paper.model.strategy import Strategy
-
-
 class SMACrossStrategy(Strategy):
     \"\"\"简单双均线交叉策略。
 

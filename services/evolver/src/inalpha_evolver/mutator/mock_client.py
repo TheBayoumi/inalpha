@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any
 
-from inalpha_shared_llm.client import MockLLMClient
-
 from .diff_applier import apply_diff
 from .llm_client import MutationResult
 

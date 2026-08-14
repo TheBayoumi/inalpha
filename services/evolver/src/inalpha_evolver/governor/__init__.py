@@ -3,7 +3,7 @@ from .loop import run_one_generation
 from .seed import SEED_STRATEGY_CODE
 
 __all__ = [
+    "SEED_STRATEGY_CODE",
     "HintGenerator",
     "run_one_generation",
-    "SEED_STRATEGY_CODE",
 ]
