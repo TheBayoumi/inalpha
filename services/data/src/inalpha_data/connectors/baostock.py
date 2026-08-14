@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import threading as _threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -69,9 +70,65 @@ _PERIOD_MAP: dict[str, str] = {
 _FETCH_LOCK = asyncio.Lock()
 #: 最小拉取间隔（秒）。公开页比 Yahoo API 更脆弱，≥1s；A 股按直连配方限速。
 _MIN_FETCH_INTERVAL_S = 1.0
-#: 锁内单次拉取超时上限——网络挂起时快速放锁，不把整个 panel 拖死。
+#: 锁内单次拉取超时上限。caller 按时失败，但后台线程退出前继续持锁，避免请求重叠。
 _FETCH_TIMEOUT_S = 30.0
 _last_fetch_mono: float = 0.0
+_LOCK_RELEASE_TASKS: set[asyncio.Task[None]] = set()
+
+
+async def _release_fetch_lock_after_worker(
+    worker: asyncio.Task[Any],
+    lock: asyncio.Lock,
+) -> None:
+    """caller 已超时/取消时，等线程退出后再推进间隔并释放源站锁。"""
+    global _last_fetch_mono
+    try:
+        await worker
+    except BaseException:
+        pass
+    finally:
+        _last_fetch_mono = time.monotonic()
+        lock.release()
+
+
+def _handoff_fetch_lock(
+    worker: asyncio.Task[Any],
+    lock: asyncio.Lock,
+) -> None:
+    """把锁释放责任转交后台 task，并保留强引用直到 task 完成。"""
+    release_task = asyncio.create_task(_release_fetch_lock_after_worker(worker, lock))
+    _LOCK_RELEASE_TASKS.add(release_task)
+    release_task.add_done_callback(_LOCK_RELEASE_TASKS.discard)
+
+
+async def _throttled_to_thread[FetchResult](
+    func: Callable[..., FetchResult],
+    /,
+    **kwargs: Any,
+) -> FetchResult:
+    """串行执行同步源站请求；超时后等线程真正退出才释放共享锁。"""
+    global _last_fetch_mono
+    lock = _FETCH_LOCK
+    await lock.acquire()
+    release_here = True
+    try:
+        wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        worker = asyncio.create_task(asyncio.to_thread(func, **kwargs))
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(worker),
+                timeout=_FETCH_TIMEOUT_S,
+            )
+        except (TimeoutError, asyncio.CancelledError):
+            _handoff_fetch_lock(worker, lock)
+            release_here = False
+            raise
+    finally:
+        if release_here:
+            _last_fetch_mono = time.monotonic()
+            lock.release()
 
 # ── baostock 持久会话 ────────────────────────────────────────────────
 # baostock login 需 ~4.3s/次；每个 fetch 单独 login+logout 会把跑批拖慢一个数量级。
@@ -295,27 +352,10 @@ class BaostockConnector:
     @staticmethod
     async def _throttled_fetch_ticker_sync(*, symbol: str) -> tuple[datetime, float]:
         """让实时 ticker 与 K 线请求共用腾讯源站串行限流。"""
-        global _last_fetch_mono
-        async with _FETCH_LOCK:
-            try:
-                wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                worker = asyncio.create_task(
-                    asyncio.to_thread(_fetch_tencent_ticker_sync, symbol=symbol)
-                )
-                try:
-                    return await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    # to_thread 无法终止；等线程真正退出再释放源站锁，避免超时/断连后
-                    # 下一请求与后台残留请求并发。
-                    try:
-                        await worker
-                    except Exception:
-                        pass
-                    raise
-            finally:
-                _last_fetch_mono = time.monotonic()
+        return await _throttled_to_thread(
+            _fetch_tencent_ticker_sync,
+            symbol=symbol,
+        )
 
     @staticmethod
     async def _throttled_fetch_sync(
@@ -330,31 +370,21 @@ class BaostockConnector:
         """串行 + 最小间隔跑 A 股公开行情请求，防并发突发触发反爬。
 
         进程级 ``_FETCH_LOCK`` 保证同一时刻只有一个请求在飞；锁内再补足
-        ``_MIN_FETCH_INTERVAL_S`` 的最小间隔。锁内每请求超时 ``_FETCH_TIMEOUT_S``，
-        TCP 挂起时快速放锁让队列继续。
+        ``_MIN_FETCH_INTERVAL_S`` 的最小间隔。caller 超过 ``_FETCH_TIMEOUT_S``
+        后及时失败；同步线程不可取消，因此其真正退出前仍持有共享锁，避免后续
+        K 线或 ticker 请求与残留线程重叠。
 
         对齐 yfinance ``_throttled_fetch_sync`` 模式。
         """
-        global _last_fetch_mono
-        async with _FETCH_LOCK:
-            try:
-                wait = _MIN_FETCH_INTERVAL_S - (time.monotonic() - _last_fetch_mono)
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                return await asyncio.wait_for(
-                    asyncio.to_thread(
-                        _fetch_sync,
-                        prefix=prefix,
-                        code=code,
-                        period=period,
-                        start_str=start_str,
-                        end_str=end_str,
-                        limit=limit,
-                    ),
-                    timeout=_FETCH_TIMEOUT_S,
-                )
-            finally:
-                _last_fetch_mono = time.monotonic()
+        return await _throttled_to_thread(
+            _fetch_sync,
+            prefix=prefix,
+            code=code,
+            period=period,
+            start_str=start_str,
+            end_str=end_str,
+            limit=limit,
+        )
 
     async def fetch_financials(self, symbol: str, as_of: str | None = None) -> dict[str, Any]:
         """拉 A股 / 港股 财报基本面数据。
