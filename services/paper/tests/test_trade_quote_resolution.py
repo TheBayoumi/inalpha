@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from inalpha_paper.data_client import DataClient
+from inalpha_paper.schemas import CreatePlanRequest, SubmitOrderRequest
 
 from .conftest import fresh_account_token
 
@@ -69,6 +70,33 @@ async def test_data_client_serializes_fresh_query(
     assert request.url.params.get("venue") == "baostock"
     assert request.url.params.get("symbol") == "sh.600519"
     assert request.url.params.get("fresh") == expected
+
+
+def test_trade_request_schemas_canonicalize_a_share_identity() -> None:
+    """direct order 与 plan 都在持久化前统一 A 股 venue/symbol。"""
+    order = SubmitOrderRequest.model_validate(
+        {
+            "venue": "akshare",
+            "symbol": "600519.SH",
+            "side": "BUY",
+            "type": "MARKET",
+            "quantity": 1,
+        }
+    )
+    plan = CreatePlanRequest.model_validate(
+        {
+            "intent": "open_long",
+            "venue": "baostock",
+            "symbol": "000001.SZ",
+            "side": "BUY",
+            "type": "MARKET",
+            "quantity": 1,
+            "rationale": "canonical identity regression",
+        }
+    )
+
+    assert (order.venue, order.symbol) == ("baostock", "sh.600519")
+    assert (plan.venue, plan.symbol) == ("baostock", "sz.000001")
 
 
 @respx.mock
@@ -210,7 +238,7 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
         json={
             "intent": "open_long",
             "venue": "baostock",
-            "symbol": "sh.600519",
+            "symbol": "600519.SH",
             "side": "BUY",
             "type": "MARKET",
             "quantity": 1,
@@ -219,7 +247,12 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
         },
     )
     assert created.status_code == 200, created.text
-    plan_id = created.json()["plan_id"]
+    created_body = created.json()
+    assert (created_body["venue"], created_body["symbol"]) == (
+        "baostock",
+        "sh.600519",
+    )
+    plan_id = created_body["plan_id"]
 
     approved = client.post(
         f"/plans/{plan_id}/approve",
@@ -251,5 +284,35 @@ def test_a_share_plan_retries_same_token_after_fresh_quote_recovers(
     result = second.json()
     assert result["plan_status"] == "executed"
     assert result["order"]["status"] == "FILLED"
+    assert result["order"]["symbol"] == "sh.600519"
     assert result["order"]["avg_fill_price"] == 1_415.0
+
+    opened_positions = client.get("/positions", headers=headers)
+    assert opened_positions.status_code == 200, opened_positions.text
+    opened_rows = opened_positions.json()
+    assert len(opened_rows) == 1
+    assert opened_rows[0]["venue"] == "baostock"
+    assert opened_rows[0]["symbol"] == "sh.600519"
+    assert opened_rows[0]["currency"] == "CNY"
+    assert opened_rows[0]["quantity"] == 1.0
+
+    closed = client.post(
+        "/orders/submit",
+        headers=headers,
+        json={
+            "venue": "baostock",
+            "symbol": "sh.600519",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": 1,
+            "ref_price": 1_415.0,
+        },
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "FILLED"
+
+    positions = client.get("/positions", headers=headers)
+    assert positions.status_code == 200, positions.text
+    rows = positions.json()
+    assert rows == []
     assert route.call_count == 2
