@@ -72,8 +72,8 @@ async def test_data_client_serializes_fresh_query(
     assert request.url.params.get("fresh") == expected
 
 
-def test_trade_request_schemas_canonicalize_a_share_identity() -> None:
-    """direct order 与 plan 都在持久化前统一 A 股 venue/symbol。"""
+def test_trade_request_schemas_canonicalize_market_identities() -> None:
+    """direct order 与 plan 都在持久化前统一 legacy venue/symbol。"""
     order = SubmitOrderRequest.model_validate(
         {
             "venue": "akshare",
@@ -94,9 +94,19 @@ def test_trade_request_schemas_canonicalize_a_share_identity() -> None:
             "rationale": "canonical identity regression",
         }
     )
+    legacy_global = SubmitOrderRequest.model_validate(
+        {
+            "venue": "akshare",
+            "symbol": "hk.00700",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": 1,
+        }
+    )
 
     assert (order.venue, order.symbol) == ("baostock", "sh.600519")
     assert (plan.venue, plan.symbol) == ("baostock", "sz.000001")
+    assert (legacy_global.venue, legacy_global.symbol) == ("yfinance", "0700.HK")
 
 
 def test_submit_sell_migrates_single_legacy_a_share_position(client: TestClient) -> None:
@@ -151,6 +161,81 @@ def test_submit_sell_migrates_single_legacy_a_share_position(client: TestClient)
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "FILLED"
+    assert client.get("/positions", headers=headers).json() == []
+
+
+@respx.mock
+def test_submit_sell_migrates_legacy_global_position_with_fresh_ticker(
+    client: TestClient,
+) -> None:
+    """旧 akshare 港股持仓可用 canonical fresh ticker 完成市价平仓。"""
+    import asyncio
+    from decimal import Decimal
+
+    from inalpha_shared.db import get_conn
+
+    from inalpha_paper.account_id import account_id_from_sub
+    from inalpha_paper.storage import accounts as accounts_store
+
+    sub, token = fresh_account_token("legacy-global-position")
+    account_id = account_id_from_sub(sub)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async def _seed_legacy_position() -> None:
+        async with get_conn() as conn:
+            await accounts_store.get_or_create(conn, account_id)
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO positions ("
+                    "account_id, venue, symbol, quantity, avg_open_price, "
+                    "realized_pnl, generation, currency, updated_at"
+                    ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())",
+                    (
+                        str(account_id),
+                        "akshare",
+                        "hk.00700",
+                        Decimal("1"),
+                        Decimal("600"),
+                        Decimal("0"),
+                        1,
+                        "HKD",
+                    ),
+                )
+
+    asyncio.run(_seed_legacy_position())
+    route = respx.get(
+        "http://data-mock.test/ticker",
+        params={"venue": "yfinance", "symbol": "0700.HK", "fresh": "true"},
+    ).mock(
+        return_value=Response(
+            200,
+            json=_ticker_response(
+                venue="yfinance",
+                symbol="0700.HK",
+                price=620.0,
+                source="yfinance_ticker",
+            ),
+        )
+    )
+
+    response = client.post(
+        "/orders/submit",
+        headers=headers,
+        json={
+            "venue": "akshare",
+            "symbol": "hk.00700",
+            "side": "SELL",
+            "type": "MARKET",
+            "quantity": 1,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "FILLED"
+    assert (body["venue"], body["symbol"]) == ("yfinance", "0700.HK")
+    assert body["avg_fill_price"] == 620.0
+    assert route.call_count == 1
     assert client.get("/positions", headers=headers).json() == []
 
 

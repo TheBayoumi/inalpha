@@ -26,6 +26,7 @@ from inalpha_paper.execution.currency_resolver import resolve_currency
         # 旧 akshare 全球前缀只为已持久化记录保留
         ("akshare", "hk.00700", "HKD"),
         # 全球单股（yfinance 后缀）
+        ("yfinance", "0700.HK", "HKD"),
         ("yfinance", "005930.KS", "KRW"),
         ("yfinance", "7203.T", "JPY"),
         ("yfinance", "VOD.L", "GBP"),

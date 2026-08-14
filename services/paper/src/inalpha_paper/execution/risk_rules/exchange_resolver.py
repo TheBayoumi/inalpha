@@ -82,6 +82,7 @@ _YF_SUFFIX_TO_CODE: dict[str, str] = {
     ".sa": "BVMF",
     ".pa": "XPAR",
     ".de": "XFRA",
+    ".hk": "XHKG",
     ".l": "XLON",
     ".t": "XTKS",
 }

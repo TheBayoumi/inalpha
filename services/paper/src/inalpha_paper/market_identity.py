@@ -3,7 +3,14 @@ from __future__ import annotations
 
 LEGACY_A_SHARE_VENUE = "akshare"
 A_SHARE_VENUE = "baostock"
+YFINANCE_VENUE = "yfinance"
 _A_SHARE_PREFIXES = frozenset({"sh", "sz"})
+_LEGACY_GLOBAL_PREFIX_TO_SUFFIX = {
+    "hk": ".HK",
+    "jp": ".T",
+    "uk": ".L",
+    "de": ".DE",
+}
 
 
 def canonicalize_market_identity(venue: str, symbol: str) -> tuple[str, str]:
@@ -15,6 +22,10 @@ def canonicalize_market_identity(venue: str, symbol: str) -> tuple[str, str]:
         A_SHARE_VENUE,
     }:
         return A_SHARE_VENUE, normalized_symbol
+    if normalized_venue == LEGACY_A_SHARE_VENUE:
+        global_symbol = _canonicalize_legacy_global_symbol(symbol)
+        if global_symbol is not None:
+            return YFINANCE_VENUE, global_symbol
     return normalized_venue, symbol.strip()
 
 
@@ -31,6 +42,42 @@ def a_share_identity_variants(
         return None
     prefix, code = normalized_symbol.split(".", 1)
     return A_SHARE_VENUE, normalized_symbol, f"{code}.{prefix}"
+
+
+def legacy_global_identity_variants(
+    venue: str,
+    symbol: str,
+) -> tuple[str, str, str] | None:
+    """返回 legacy ``akshare/<prefix>.<code>`` 对应的 yfinance identity。"""
+    canonical_venue, canonical_symbol = canonicalize_market_identity(venue, symbol)
+    if canonical_venue != YFINANCE_VENUE or "." not in canonical_symbol:
+        return None
+    code, suffix = canonical_symbol.rsplit(".", 1)
+    suffix_with_dot = f".{suffix.upper()}"
+    reverse = {value: key for key, value in _LEGACY_GLOBAL_PREFIX_TO_SUFFIX.items()}
+    prefix = reverse.get(suffix_with_dot)
+    if prefix is None:
+        return None
+    legacy_code = code.zfill(5) if prefix == "hk" else code
+    return YFINANCE_VENUE, canonical_symbol, f"{prefix}.{legacy_code}"
+
+
+def _canonicalize_legacy_global_symbol(symbol: str) -> str | None:
+    """把 ``hk.00700`` 等历史 akshare 格式转换为 yfinance 后缀格式。"""
+    normalized = symbol.strip()
+    if "." not in normalized:
+        return None
+    prefix, code = normalized.split(".", 1)
+    suffix = _LEGACY_GLOBAL_PREFIX_TO_SUFFIX.get(prefix.lower())
+    if suffix is None or not code:
+        return None
+    if prefix.lower() == "hk":
+        if not code.isdigit():
+            return None
+        code = code.lstrip("0").zfill(4)
+    else:
+        code = code.upper()
+    return f"{code}{suffix}"
 
 
 def _canonicalize_a_share_symbol(symbol: str) -> str | None:
