@@ -55,7 +55,7 @@ describe("ask-path e2e · 完整 happy path + telemetry 事件序列", () => {
     });
 
     // 第一次：被拦
-    const first = (await wrapped.execute!({ candidateId: "c-42" })) as {
+    const first = (await wrapped.execute!({ candidateId: "c-42" }, { runId: "turn-1" })) as {
       isError: boolean;
       requiresApproval: boolean;
     };
@@ -73,7 +73,7 @@ describe("ask-path e2e · 完整 happy path + telemetry 事件序列", () => {
     });
 
     // 第二次：同 input → cache hit → 真 execute
-    const second = await wrapped.execute!({ candidateId: "c-42" });
+    const second = await wrapped.execute!({ candidateId: "c-42" }, { runId: "turn-2" });
     expect(exec).toHaveBeenCalledOnce();
     expect(second).toEqual({ candidateId: "c-42", status: "promoted" });
 
@@ -92,6 +92,83 @@ describe("ask-path e2e · 完整 happy path + telemetry 事件序列", () => {
   });
 });
 
+describe("ask-path e2e · 同一 user turn 不能自批", () => {
+  it("同 turn 重调被拒绝，只有下一条用户消息才能放行同一演化请求", async () => {
+    const { events, cache, store, runner } = makeEnv();
+    const exec = vi.fn().mockResolvedValue({ status: "queued" });
+    const tool = { id: "evolver.run_evolution", description: "", execute: exec };
+    const wrapped = withHooks(tool, {
+      runner,
+      permissionResolver: () => "ask",
+      askCache: cache,
+      pendingApprovals: store,
+      getSessionId: () => "console:dev",
+    });
+    const input = {
+      seedStrategyId: "sma_cross_v1",
+      budget: 1,
+      config: { venue: "binance", symbol: "BTC/USDT", timeframe: "1h" },
+      idempotencyKey: "first-key",
+    };
+
+    const first = (await wrapped.execute!(input, { runId: "turn-1" })) as {
+      requiresApproval: boolean;
+    };
+    const sameTurnRetry = (await wrapped.execute!(
+      { ...input, idempotencyKey: "retry-key" },
+      { runId: "turn-1" },
+    )) as { requiresApproval: boolean; message: string };
+
+    expect(first.requiresApproval).toBe(true);
+    expect(sameTurnRetry.requiresApproval).toBe(true);
+    expect(sameTurnRetry.message).toContain("same user turn");
+    expect(exec).not.toHaveBeenCalled();
+    expect(eventsOf(events, "ask_consume_miss")).toContainEqual(
+      expect.objectContaining({ reason: "same_turn" }),
+    );
+    expect(eventsOf(events, "ask_pending_requested")).toHaveLength(1);
+
+    const nextTurn = await wrapped.execute!(
+      { ...input, idempotencyKey: "third-key" },
+      { runId: "turn-2" },
+    );
+    expect(nextTurn).toEqual({ status: "queued" });
+    expect(exec).toHaveBeenCalledOnce();
+
+    store.clearAll();
+    cache.clear();
+  });
+
+  it("缺少 turn ID 时即使相同请求重调也 fail closed", async () => {
+    const { cache, store, runner } = makeEnv();
+    const exec = vi.fn();
+    const wrapped = withHooks(
+      { id: "evolver.run_evolution", execute: exec },
+      {
+        runner,
+        permissionResolver: () => "ask",
+        askCache: cache,
+        pendingApprovals: store,
+        getSessionId: () => "console:dev",
+      },
+    );
+
+    await wrapped.execute!({ seedStrategyId: "sma_cross_v1", budget: 1, config: {} });
+    const retry = (await wrapped.execute!({
+      seedStrategyId: "sma_cross_v1",
+      budget: 1,
+      config: {},
+    })) as { requiresApproval: boolean; message: string };
+
+    expect(retry.requiresApproval).toBe(true);
+    expect(retry.message).toContain("could not be verified");
+    expect(exec).not.toHaveBeenCalled();
+
+    store.clearAll();
+    cache.clear();
+  });
+});
+
 describe("ask-path e2e · 审批身份投影（promote reason 措辞变化不重弹）", () => {
   it("第一次带 reason-A，用户允许后重调换成 reason-B → 仍命中 cache → execute（不再弹第二次确认）", async () => {
     const { events, cache, store, runner } = makeEnv();
@@ -106,18 +183,24 @@ describe("ask-path e2e · 审批身份投影（promote reason 措辞变化不重
     });
 
     // 第一次：LLM 写了一段 reason → 被拦
-    const first = (await wrapped.execute!({
-      candidateId: "c-42",
-      reason: "2026-Q2 BTC 1h 回测，fitness=0.85 显著高于 baseline 0.32，max_drawdown=8%",
-    })) as { isError: boolean; requiresApproval: boolean };
+    const first = (await wrapped.execute!(
+      {
+        candidateId: "c-42",
+        reason: "2026-Q2 BTC 1h 回测，fitness=0.85 显著高于 baseline 0.32，max_drawdown=8%",
+      },
+      { runId: "turn-1" },
+    )) as { isError: boolean; requiresApproval: boolean };
     expect(first.requiresApproval).toBe(true);
     expect(exec).not.toHaveBeenCalled();
 
     // 第二次：用户允许后 agent 重调，但 LLM 把 reason 换了个措辞（真实场景必现）
-    const second = await wrapped.execute!({
-      candidateId: "c-42",
-      reason: "回测区间 2026 二季度 BTC 一小时线，适应度 0.85 远超基准 0.32，最大回撤约 8%",
-    });
+    const second = await wrapped.execute!(
+      {
+        candidateId: "c-42",
+        reason: "回测区间 2026 二季度 BTC 一小时线，适应度 0.85 远超基准 0.32，最大回撤约 8%",
+      },
+      { runId: "turn-2" },
+    );
 
     // 关键断言：reason 不同也命中 cache → 真正 execute，而不是再返 requiresApproval
     expect(exec).toHaveBeenCalledOnce();
@@ -126,7 +209,7 @@ describe("ask-path e2e · 审批身份投影（promote reason 措辞变化不重
     // execute 拿到的仍是完整 input（含第二次的 reason）—— 投影只作用于 cache key
     expect(exec).toHaveBeenCalledWith(
       expect.objectContaining({ candidateId: "c-42", reason: expect.stringContaining("适应度") }),
-      undefined,
+      { runId: "turn-2" },
     );
 
     store.clearAll();
@@ -187,11 +270,16 @@ describe("ask-path e2e · 复合模拟盘启动只确认一次", () => {
       allocation: 5000,
     };
 
-    const first = (await wrapped.execute!(input)) as { requiresApproval: boolean };
+    const first = (await wrapped.execute!(input, { runId: "turn-1" })) as {
+      requiresApproval: boolean;
+    };
     expect(first.requiresApproval).toBe(true);
     expect(exec).not.toHaveBeenCalled();
 
-    const second = await wrapped.execute!({ ...input, reason: "确认后改写审计文案，不改变运行范围" });
+    const second = await wrapped.execute!(
+      { ...input, reason: "确认后改写审计文案，不改变运行范围" },
+      { runId: "turn-2" },
+    );
     expect(second).toMatchObject({ promotedNow: true, run: { status: "running" } });
     expect(exec).toHaveBeenCalledOnce();
     expect(eventsOf(events, "ask_marked")).toHaveLength(1);

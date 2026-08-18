@@ -12,7 +12,12 @@ export type {
 
 export { HookRunner } from "./runner.js";
 export { toolMatches } from "./matcher.js";
-export { withHooks, defaultGetSessionId, AUTH_SUB_KEY } from "./with-hooks.js";
+export {
+  withHooks,
+  defaultGetSessionId,
+  defaultGetTurnId,
+  AUTH_SUB_KEY,
+} from "./with-hooks.js";
 export type { PermissionResolver, WithHooksOptions } from "./with-hooks.js";
 
 export { createAuditLogHandler, defaultAuditRegistration } from "./handlers/audit-log.js";

@@ -52,6 +52,36 @@ describe("projectApprovalInput", () => {
     expect(first).not.toEqual(changedAllocation);
   });
 
+  it("演化审批忽略幂等键，但绑定种子、预算与冻结数据配置", () => {
+    const base = {
+      seedStrategyId: "sma_cross_v1",
+      budget: 1,
+      config: {
+        venue: "binance",
+        symbol: "BTC/USDT",
+        timeframe: "1h",
+        from_ts: "2026-07-15T00:00:00Z",
+        as_of: "2026-08-14T00:00:00Z",
+      },
+    };
+    const first = projectApprovalInput("evolver.run_evolution", {
+      ...base,
+      idempotencyKey: "first-key",
+    });
+    const retry = projectApprovalInput("evolver.run_evolution", {
+      ...base,
+      idempotencyKey: "retry-key",
+    });
+    const largerBudget = projectApprovalInput("evolver.run_evolution", {
+      ...base,
+      budget: 2,
+      idempotencyKey: "first-key",
+    });
+
+    expect(first).toEqual(retry);
+    expect(first).not.toEqual(largerBudget);
+  });
+
   it("未登记 tool:原样返回完整 input", () => {
     const input = { foo: 1, bar: "z" };
     expect(projectApprovalInput("some.other_tool", input)).toBe(input);

@@ -144,6 +144,15 @@ export function defaultGetSessionId(ctx: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * 抽取 Mastra 每个 user turn 唯一的 ``runId``，仅用于证明审批发生在后续消息。
+ * 它不能替代稳定 sessionId；缺失时 ask cache 必须 fail closed。
+ */
+export function defaultGetTurnId(ctx: unknown): string | undefined {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  return pickString((ctx as Record<string, unknown>).runId);
+}
+
 function pickString(v: unknown): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
@@ -164,6 +173,8 @@ export type WithHooksOptions = {
   permissionResolver?: PermissionResolver;
   /** 可选 sessionId 提供器；从 tool ctx 中取（依赖 Mastra runtime context） */
   getSessionId?: (toolCtx: unknown) => string | undefined;
+  /** 可选 user-turn ID 提供器；缺省读取 Mastra ``ctx.runId``。 */
+  getTurnId?: (toolCtx: unknown) => string | undefined;
   /**
    * 可选挂起池（D-9.1b / ADR-0018）。permissionResolver=ask 时把请求挂进去，供
    * CLI / Web 入口（GET /permissions/pending）查看。缺省用模块级单例（同
@@ -194,6 +205,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
   }
 
   const getSessionId = opts.getSessionId ?? defaultGetSessionId;
+  const getTurnId = opts.getTurnId ?? defaultGetTurnId;
 
   const wrapped: GenericTool = {
     ...tool,
@@ -204,6 +216,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
       const toolName = tool.id;
       try {
         const sessionId = getSessionId(ctx);
+        const turnId = getTurnId(ctx);
 
         // 1. PreToolUse
         const pre = await opts.runner.run("PreToolUse", {
@@ -242,15 +255,11 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
           //
           // 第一次 ask：cache 没命中 → mark + 返 requiresApproval；agent 在 chat
           //   里向用户说明 + 等用户口头同意。
-          // 第二次 ask（同 sessionId + 同 toolName + 同 input，60s 内）：cache 命中
-          //   → 消费 + 继续走 execute；agent 无需在 input 里塞任何 token。
+          // 第二次 ask（同 sessionId + 同 toolName + 同审批身份，且来自后续 user turn）：
+          //   cache 命中 → 消费 + 继续走 execute。同一 turn 内自重试始终拒绝。
           //
-          // 这一改解决了 Mastra dev playground 没有 popup UI 时"用户在 chat 里说
-          // '允许' / agent 重调还是被拦"的死循环。
-          //
-          // 安全模型：agent 是否真等了用户回复完全靠 prompt 纪律 + 后端硬校验
-          // （如 promote 的 fitness > baseline）作护栏；本缓存只解决 UX 死循环，
-          // 不是强制审批门。详见 permissions/ask-cache.ts。
+          // sessionId 负责用户/会话隔离，turnId（Mastra ctx.runId）只负责证明期间确实
+          // 出现过新的用户消息。缺少 turnId 时 fail closed，不能靠模型纪律代替审批。
           //
           // 同时把请求挂进 PendingApprovalsStore（fire-and-forget）—— GET
           // /permissions/pending 仍能列出来，为未来 CLI / Web 入口保留。
@@ -266,23 +275,38 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
           // 详见 permissions/approval-identity.ts。
           const approvalKey = projectApprovalInput(toolName, effectiveInput);
 
-          if (
-            cache.consume(sessionId, toolName, approvalKey, (msg) =>
+          const consumeResult = cache.consume(
+            sessionId,
+            toolName,
+            approvalKey,
+            turnId,
+            (msg) =>
               // stderr 走 mastra dev log，方便 user 实时看 mismatch 原因
               console.warn(`[askCache] ${msg}`),
-            )
-          ) {
-            // 第二次 ask 命中 cache → 一次性消费 + 放行（继续往下走 execute）
+          );
+
+          if (consumeResult === "consumed") {
+            // 后续 user turn 命中 cache → 一次性消费 + 放行（继续往下走 execute）
           } else {
-            // 第一次 ask：mark cache + 挂 store（CLI 入口可见）+ 返 requiresApproval
-            cache.mark(sessionId, toolName, approvalKey);
-            void store.request({
-              toolName,
-              toolInput: effectiveInput,
-              sessionId,
-              authSub: sessionId,
-              timeoutMs,
-            });
+            if (consumeResult === "miss") {
+              // 首次 ask：mark cache + 挂 store（CLI 入口可见）。
+              cache.mark(sessionId, toolName, approvalKey, turnId);
+              void store.request({
+                toolName,
+                toolInput: effectiveInput,
+                sessionId,
+                authSub: sessionId,
+                timeoutMs,
+              });
+            }
+            const turnBoundaryMessage =
+              consumeResult === "same_turn"
+                ? `This is a retry inside the same user turn. Do NOT call the tool again now. ` +
+                  `Stop and wait for the user's next chat message; only that new turn can confirm it.\n\n`
+                : consumeResult === "missing_turn_id"
+                  ? `A safe user-turn boundary could not be verified. Do NOT retry or execute this ` +
+                    `action; tell the user approval could not be completed safely.\n\n`
+                  : "";
             return {
               isError: true,
               deniedBy: "permission-ask",
@@ -291,6 +315,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
               toolInput: effectiveInput,
               message:
                 `APPROVAL_REQUIRED: tool "${toolName}" needs explicit user consent.\n\n` +
+                turnBoundaryMessage +
                 `**There is NO UI button, NO popup, NO admin page.** The user can ONLY ` +
                 `reply with chat text. Never tell them to "click 允许" or "在界面上" / ` +
                 `"open the admin page" — they can't.\n\n` +
@@ -300,15 +325,14 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
                 `(e.g. paper.promote_candidate → "add this strategy to the live pool" / ` +
                 `"把这条策略加入正式策略池"). Show the *why* + key inputs (use human ` +
                 `labels alongside IDs). Ask the user to confirm in chat.\n` +
-                `  2. When the user replies with explicit consent ("ok / yes / allow / ` +
-                `允许 / 同意 / 好 / 上"), call this tool again with the **same input** ` +
-                `(no extra fields, no token; the retry just works).\n` +
+                `  2. End the current response and wait. Only after the user sends a NEW chat ` +
+                `message with explicit consent ("ok / yes / allow / 允许 / 同意 / 好 / 上"), ` +
+                `call this tool again with the **same approval-identity inputs** (no token). ` +
+                `A retry in the current turn is always rejected.\n` +
                 `  3. If they refuse / hesitate / give ambiguous answer → tell them ` +
                 `you've cancelled, do NOT retry.\n` +
-                `  4. Never invent reasons like "the 60-second window timed out" / ` +
-                `"the system needs a popup" — if a retry returns this same APPROVAL_REQUIRED, ` +
-                `the most likely cause is that the LLM (you) changed the input between calls. ` +
-                `Re-explain to the user and ask again with the *exact* same args.`,
+                `  4. If a later-turn retry returns this same APPROVAL_REQUIRED, preserve all ` +
+                `operation-defining args and ask again; do not invent a popup or timeout.`,
             };
           }
         }

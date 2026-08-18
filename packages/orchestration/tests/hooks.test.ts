@@ -15,6 +15,7 @@ import {
   createToolIdempotencyHandlers,
   defaultAuditRegistration,
   defaultGetSessionId,
+  defaultGetTurnId,
   defaultGridSizeCapRegistration,
   defaultIdempotencyRegistrations,
   toolMatches,
@@ -370,14 +371,14 @@ describe("withHooks", () => {
     });
 
     // 第一次调 → 被 ask 拦
-    await wrapped.execute!({ x: 1, y: "abc" });
+    await wrapped.execute!({ x: 1, y: "abc" }, { runId: "turn-1" });
     expect(exec).not.toHaveBeenCalled();
     expect(cache.size()).toBe(1);
 
     // 第二次调（同 input）→ cache 命中 → 放行
-    const out = await wrapped.execute!({ x: 1, y: "abc" });
+    const out = await wrapped.execute!({ x: 1, y: "abc" }, { runId: "turn-2" });
     expect(exec).toHaveBeenCalledOnce();
-    expect(exec).toHaveBeenCalledWith({ x: 1, y: "abc" }, undefined);
+    expect(exec).toHaveBeenCalledWith({ x: 1, y: "abc" }, { runId: "turn-2" });
     expect(out).toEqual({ ran: true });
     // 一次性消费：第二次后 cache 又空了
     expect(cache.size()).toBe(0);
@@ -418,12 +419,14 @@ describe("withHooks", () => {
       askCache: cache,
     });
 
-    await wrapped.execute!({ x: 1 }); // 第 1 次 → ask
-    await wrapped.execute!({ x: 1 }); // 第 2 次 → 放行 + 消费
+    await wrapped.execute!({ x: 1 }, { runId: "turn-1" }); // 第 1 次 → ask
+    await wrapped.execute!({ x: 1 }, { runId: "turn-2" }); // 第 2 次 → 放行 + 消费
     expect(exec).toHaveBeenCalledOnce();
 
     // 第 3 次：cache 空，又被 ask
-    const out = (await wrapped.execute!({ x: 1 })) as { deniedBy: string };
+    const out = (await wrapped.execute!({ x: 1 }, { runId: "turn-3" })) as {
+      deniedBy: string;
+    };
     expect(exec).toHaveBeenCalledOnce(); // 没增加
     expect(out.deniedBy).toBe("permission-ask");
   });
@@ -466,11 +469,14 @@ describe("withHooks", () => {
     });
 
     // 第一次调：key 顺序 {candidateId, reason}
-    await wrapped.execute!({ candidateId: "X", reason: "alpha" });
+    await wrapped.execute!({ candidateId: "X", reason: "alpha" }, { runId: "turn-1" });
     expect(exec).not.toHaveBeenCalled();
 
     // 第二次调：LLM 把 key 顺序换成 {reason, candidateId} —— stable stringify 仍命中
-    const out = await wrapped.execute!({ reason: "alpha", candidateId: "X" });
+    const out = await wrapped.execute!(
+      { reason: "alpha", candidateId: "X" },
+      { runId: "turn-2" },
+    );
     expect(exec).toHaveBeenCalledOnce();
     expect(out).toEqual({ ok: 1 });
     cache.clear();
@@ -682,6 +688,15 @@ describe("audit-log handler", () => {
 // ────────────────────────────────────────────────────────────────────
 // defaultGetSessionId · Mastra runtime context 字段抽取
 // ────────────────────────────────────────────────────────────────────
+
+describe("defaultGetTurnId", () => {
+  it("只读取每个 user turn 唯一的 runId", () => {
+    expect(defaultGetTurnId({ runId: "turn-1" })).toBe("turn-1");
+    expect(defaultGetTurnId({ runId: "" })).toBeUndefined();
+    expect(defaultGetTurnId({ agent: { threadId: "thread-1" } })).toBeUndefined();
+    expect(defaultGetTurnId(undefined)).toBeUndefined();
+  });
+});
 
 describe("defaultGetSessionId", () => {
   it("prefers requestContext authSub — mastra middleware 注入的已认证主体 (#91 多租户 scope)", () => {

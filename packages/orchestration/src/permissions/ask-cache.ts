@@ -16,17 +16,24 @@
  *   的允许不会被 B 用户复用
  * - 60s TTL：足够给 agent 在 chat 转一圈，短到防 agent 长期"残留许可"复用
  * - 一次性：消费即删；agent 想再做同样动作必须再走一轮 ask
- * - **agent 是否真等了用户回复完全靠 prompt 纪律 + 后端硬校验作护栏**：
- *   理论上 agent 可以第一次 ask 失败后立刻重试（不等用户）→ 也会被允许。
- *   这就是为什么 promote_candidate 等危险操作的**后端**还做 ``fitness > baseline``
- *   等硬校验作第二道防线；本缓存只解决 UX 死循环，不充当强制审批门
+ * - **强制跨 user turn**：entry 记录首次 ask 的 ``ctx.runId``，只有后续不同
+ *   ``runId`` 才能消费。同一模型 turn 内立即重试只会再次得到审批要求，不能自批。
+ * - 缺少 turn ID 时 fail closed：可记录待审批项，但不能消费。
  */
 
 interface AskCacheEntry {
   markedAt: number;
+  /** 首次触发 ask 的 user-turn ID；消费时必须来自另一个 turn。 */
+  turnId: string | undefined;
   /** TTL 到期自动清理的 timer，consume 时记得 clearTimeout */
   timer: ReturnType<typeof setTimeout>;
 }
+
+export type AskConsumeResult =
+  | "consumed"
+  | "miss"
+  | "same_turn"
+  | "missing_turn_id";
 
 const DEFAULT_TTL_MS = 60_000;
 
@@ -94,10 +101,15 @@ export class AskApprovalCache {
   }
 
   /**
-   * 标记 (sessionId, toolName, input) 已被 ask 过；TTL 后自动失效。
-   * 若已存在条目，重置 TTL（连续多次 ask 同一动作不需要重启计时）。
+   * 标记 (sessionId, toolName, input) 已被 ask 过，并记录当前 user turn。
+   * 若已存在条目，重置 TTL，但同 turn 重试仍不能消费。
    */
-  mark(sessionId: string | undefined, toolName: string, input: unknown): void {
+  mark(
+    sessionId: string | undefined,
+    toolName: string,
+    input: unknown,
+    turnId: string | undefined,
+  ): void {
     this.maybeWarnGlobalFallback(sessionId, "mark", toolName);
     const key = AskApprovalCache.keyFor(sessionId, toolName, input);
     const existing = this.entries.get(key);
@@ -112,29 +124,30 @@ export class AskApprovalCache {
         ts: new Date().toISOString(),
       });
     }, this.ttlMs);
-    this.entries.set(key, { markedAt: Date.now(), timer });
+    this.entries.set(key, { markedAt: Date.now(), turnId, timer });
     this.telemetry({
       event: "ask_marked",
       toolName,
       sessionId: sessionId ?? null,
+      hasTurnId: turnId !== undefined,
       ts: new Date().toISOString(),
     });
   }
 
   /**
-   * 检查 + 一次性消费。命中（同 sessionId + toolName + input 60s 内被 mark）→
-   * 删除条目 + 返 ``true``；未命中 → 返 ``false``。
+   * 检查 + 一次性消费。只有 key 命中、TTL 有效且当前 ``turnId`` 与标记时不同，
+   * 才返回 ``consumed``；同 turn 自重试或无法验证 turn 边界都 fail closed。
    *
-   * 未命中时若 ``debugSink`` 提供且存在"同 sessionId + 同 toolName 但 input 不同"
-   * 的条目，会调 sink 打 mismatch diff（帮 user 定位是 LLM 改了 input 哪个字段
-   * 导致 cache 撞不上）。
+   * input 未命中时若 ``debugSink`` 提供且存在同 session/tool 的其它条目，会输出
+   * mismatch diff，帮助定位 LLM 改动了哪些字段。
    */
   consume(
     sessionId: string | undefined,
     toolName: string,
     input: unknown,
+    turnId: string | undefined,
     debugSink?: (msg: string) => void,
-  ): boolean {
+  ): AskConsumeResult {
     this.maybeWarnGlobalFallback(sessionId, "consume", toolName);
     const key = AskApprovalCache.keyFor(sessionId, toolName, input);
     const entry = this.entries.get(key);
@@ -147,7 +160,7 @@ export class AskApprovalCache {
         reason: "no_entry",
         ts: new Date().toISOString(),
       });
-      return false;
+      return "miss";
     }
     const latency_ms = Date.now() - entry.markedAt;
     // 双保险：即便 setTimeout 未触发，超时仍按未命中处理
@@ -163,7 +176,41 @@ export class AskApprovalCache {
         latency_ms,
         ts: new Date().toISOString(),
       });
-      return false;
+      return "miss";
+    }
+    if (!entry.turnId || !turnId) {
+      if (debugSink) {
+        debugSink(
+          `AskCache: cannot verify a new user turn for ${toolName} (sid=${sessionId}); ` +
+            "refusing to consume approval",
+        );
+      }
+      this.telemetry({
+        event: "ask_consume_miss",
+        toolName,
+        sessionId: sessionId ?? null,
+        reason: "missing_turn_id",
+        latency_ms,
+        ts: new Date().toISOString(),
+      });
+      return "missing_turn_id";
+    }
+    if (entry.turnId === turnId) {
+      if (debugSink) {
+        debugSink(
+          `AskCache: same user turn retried ${toolName} (sid=${sessionId}); ` +
+            "waiting for a new user message",
+        );
+      }
+      this.telemetry({
+        event: "ask_consume_miss",
+        toolName,
+        sessionId: sessionId ?? null,
+        reason: "same_turn",
+        latency_ms,
+        ts: new Date().toISOString(),
+      });
+      return "same_turn";
     }
     clearTimeout(entry.timer);
     this.entries.delete(key);
@@ -174,7 +221,7 @@ export class AskApprovalCache {
       latency_ms,
       ts: new Date().toISOString(),
     });
-    return true;
+    return "consumed";
   }
 
   /** 未命中时尝试找同 sid+tool 但 input 不同的条目，打 diff 帮排查。 */
