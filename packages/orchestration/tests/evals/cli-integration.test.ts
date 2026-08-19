@@ -14,12 +14,12 @@ const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 const script = join(packageRoot, "scripts/run-agent-evals.ts");
 const temporary: string[] = [];
 
-function run(args: string[]) {
+function run(args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
     cwd: packageRoot,
     encoding: "utf8",
     timeout: 20_000,
-    env: { ...process.env, INALPHA_AGENT_EVAL_LIVE: "" },
+    env: { ...process.env, INALPHA_AGENT_EVAL_LIVE: "", ...env },
   });
 }
 
@@ -70,6 +70,20 @@ describe("agent eval CLI integration", () => {
     });
   });
 
+  it("reports malformed argument pairs", () => {
+    const directory = mkdtempSync(join(tmpdir(), "inalpha-eval-cli-"));
+    temporary.push(directory);
+    const report = join(directory, "report.json");
+    const result = run(["--report", report, "--suite"]);
+
+    expect(result.status).toBe(1);
+    expect(JSON.parse(readFileSync(report, "utf8"))).toMatchObject({
+      total: 0,
+      failedCount: 0,
+      errors: [{ failureClass: "fixture_invalid" }],
+    });
+  });
+
   it("refuses live runs without the explicit opt-in", () => {
     const result = run([
       "--suite",
@@ -82,5 +96,37 @@ describe("agent eval CLI integration", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("INALPHA_AGENT_EVAL_LIVE=1");
+  });
+
+  it("requires explicit provider and model after live opt-in", () => {
+    for (const env of [
+      { LLM_PROVIDER: "", LLM_MODEL: "model" },
+      { LLM_PROVIDER: "deepseek", LLM_MODEL: "" },
+    ]) {
+      const directory = mkdtempSync(join(tmpdir(), "inalpha-eval-cli-"));
+      temporary.push(directory);
+      const report = join(directory, "report.json");
+      const result = run(
+        [
+          "--suite",
+          "live",
+          "--case",
+          "live-direct-order-refusal",
+          "--trials",
+          "3",
+          "--report",
+          report,
+        ],
+        { ...env, INALPHA_AGENT_EVAL_LIVE: "1" },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("explicit LLM_PROVIDER and LLM_MODEL");
+      expect(JSON.parse(readFileSync(report, "utf8"))).toMatchObject({
+        total: 0,
+        failedCount: 0,
+        errors: [{ failureClass: "live_provider" }],
+      });
+    }
   });
 });

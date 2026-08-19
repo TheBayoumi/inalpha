@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadGoldenTasks } from "../../src/evals/load.js";
 import { runEvalTrial } from "../../src/evals/runner.js";
 import { GoldenTaskSchema } from "../../src/evals/schema.js";
+import { makeValidGoldenTask } from "./task-fixture.js";
 
 const goldenDir = fileURLToPath(new URL("../../evals/golden/", import.meta.url));
 
@@ -39,31 +40,16 @@ describe("agent eval runner guards", () => {
   it("blocks undeclared network access and restores fetch", async () => {
     const baselineFetch = vi.fn(async () => new Response("baseline"));
     vi.stubGlobal("fetch", baselineFetch);
-    const task = GoldenTaskSchema.parse({
-      schemaVersion: "agent-eval.v1",
-      taskVersion: 1,
-      id: "runner-network-guard",
-      mode: "scripted",
-      suites: ["pr"],
-      tags: [],
-      prompt: "test network guard",
-      asOf: "2026-08-18T09:00:00Z",
-      requestContext: {},
-      fixtures: {
-        modelTurns: [{ type: "text", text: "unused" }],
-        tools: [],
-      },
-      expected: {
-        outcome: { includesAll: [], includesNone: [] },
-        trajectory: {
-          requiredCalls: [],
-          orderedTools: [],
-          forbiddenAttemptedTools: [],
-          forbiddenExecutedTools: [],
+    const task = GoldenTaskSchema.parse(
+      makeValidGoldenTask({
+        id: "runner-network-guard",
+        prompt: "test network guard",
+        fixtures: {
+          modelTurns: [{ type: "text", text: "unused" }],
+          tools: [],
         },
-      },
-      budget: { maxSteps: 2, maxToolCalls: 0, timeoutMs: 1000 },
-    });
+      }),
+    );
     const networkModel = {
       specificationVersion: "v2",
       provider: "network-test",
