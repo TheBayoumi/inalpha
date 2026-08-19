@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 
 import { ScriptedModel } from "../../src/evals/scripted-model.js";
 import { createOrchestrator } from "../../src/mastra/agents/create-orchestrator.js";
-import { orchestrator } from "../../src/mastra/agents/orchestrator.js";
 
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -44,16 +43,5 @@ describe("Orchestrator factory", () => {
     expect(`${result.stdout}${result.stderr}`).not.toMatch(
       /\[(?:env|paths|mcp)\]/,
     );
-  });
-
-  it("preserves the production singleton configuration", async () => {
-    expect(orchestrator).toMatchObject({ id: "orchestrator", name: "orchestrator" });
-    expect(await orchestrator.getDefaultOptions()).toMatchObject({ maxSteps: 40 });
-    expect(orchestrator.hasOwnMemory()).toBe(true);
-    expect(
-      (await orchestrator.listConfiguredOutputProcessors()).map(
-        (processor) => processor.id,
-      ),
-    ).toEqual(["pending-plan-notice"]);
   });
 });

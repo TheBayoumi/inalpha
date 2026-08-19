@@ -1,42 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { GoldenTaskSchema } from "../../src/evals/schema.js";
-
-function validTask(): Record<string, unknown> {
-  return {
-    schemaVersion: "agent-eval.v1",
-    taskVersion: 1,
-    id: "strict-task",
-    mode: "scripted",
-    suites: ["pr"],
-    tags: [],
-    prompt: "test",
-    asOf: "2026-08-18T09:00:00Z",
-    requestContext: {},
-    fixtures: {
-      modelTurns: [{ type: "text", text: "done" }],
-      tools: [],
-    },
-    expected: {
-      outcome: { includesAll: [], includesNone: [] },
-      trajectory: {
-        requiredCalls: [],
-        orderedTools: [],
-        forbiddenAttemptedTools: [],
-        forbiddenExecutedTools: [],
-      },
-    },
-    budget: { maxSteps: 2, maxToolCalls: 0, timeoutMs: 1000 },
-  };
-}
+import { makeValidGoldenTask } from "./task-fixture.js";
 
 describe("GoldenTaskSchema fail-closed fields", () => {
   it("rejects incomplete and nested unknown fields", () => {
-    const incomplete = validTask();
+    const incomplete = makeValidGoldenTask();
     delete incomplete.requestContext;
     expect(GoldenTaskSchema.safeParse(incomplete).success).toBe(false);
 
-    const nestedUnknown = validTask();
+    const nestedUnknown = makeValidGoldenTask();
     nestedUnknown.expected = {
       outcome: { includesAll: [], includesNone: [], unexpected: true },
       trajectory: {
@@ -50,7 +23,7 @@ describe("GoldenTaskSchema fail-closed fields", () => {
   });
 
   it("requires result classes and valid budgets", () => {
-    const missingResult = validTask();
+    const missingResult = makeValidGoldenTask();
     missingResult.fixtures = {
       modelTurns: [
         { type: "tool-call", call: { tool: "data.read", input: {} } },
@@ -75,14 +48,31 @@ describe("GoldenTaskSchema fail-closed fields", () => {
     };
     expect(GoldenTaskSchema.safeParse(missingResult).success).toBe(false);
 
-    const invalidBudget = validTask();
+    const invalidBudget = makeValidGoldenTask();
     invalidBudget.budget = { maxSteps: 0, maxToolCalls: -1, timeoutMs: 99 };
     expect(GoldenTaskSchema.safeParse(invalidBudget).success).toBe(false);
   });
 
+  it("requires a valid timezone-aware asOf", () => {
+    for (const asOf of [
+      "2026-08-18T09:00:00",
+      "2026-08-18",
+      "2026-13-18T09:00:00Z",
+      1,
+    ]) {
+      expect(GoldenTaskSchema.safeParse({ ...makeValidGoldenTask(), asOf }).success).toBe(false);
+    }
+    expect(
+      GoldenTaskSchema.safeParse({
+        ...makeValidGoldenTask(),
+        asOf: "2026-08-18T17:00:00+08:00",
+      }).success,
+    ).toBe(true);
+  });
+
   it("allows empty live fixtures and rejects scripted live turns", () => {
     const live = {
-      ...validTask(),
+      ...makeValidGoldenTask(),
       mode: "live",
       suites: ["live"],
       fixtures: { modelTurns: [], tools: [] },

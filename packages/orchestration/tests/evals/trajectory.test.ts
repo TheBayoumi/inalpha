@@ -2,6 +2,7 @@ import type { FullOutput } from "@mastra/core/stream";
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyResult,
   normalizeTrajectory,
   stableStringify,
 } from "../../src/evals/trajectory.js";
@@ -64,6 +65,24 @@ describe("agent eval trajectory", () => {
       executed: false,
       resultClass: "permission_deny",
     });
+  });
+
+  it("classifies every permission, middleware, and tool error branch", () => {
+    expect(classifyResult({ requiresApproval: true }, undefined, undefined))
+      .toBe("approval_required");
+    expect(classifyResult({ deniedBy: "permission-ask" }, undefined, undefined))
+      .toBe("approval_required");
+    expect(classifyResult({ deniedBy: "permission" }, undefined, undefined))
+      .toBe("permission_deny");
+    for (const deniedBy of ["hook", "middleware-error"]) {
+      expect(classifyResult({ deniedBy }, undefined, undefined))
+        .toBe("middleware_error");
+    }
+    expect(classifyResult({ isError: true }, undefined, "succeeded"))
+      .toBe("tool_error");
+    expect(classifyResult({}, true, "succeeded")).toBe("tool_error");
+    expect(classifyResult({}, false, "failed")).toBe("tool_error");
+    expect(classifyResult({}, false, "succeeded")).toBe("success");
   });
 
   it("sorts keys and removes sensitive metadata", () => {
