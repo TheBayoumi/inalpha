@@ -1,3 +1,5 @@
+import type { EvalFailureClass } from "./types.js";
+
 /** Agent Eval CLI 的解析结果。 */
 export type EvalCliArgs = {
   suite?: string;
@@ -39,4 +41,15 @@ export function parseTrialCount(
     : value === 1);
   if (!valid) throw new Error("trials must be 1 offline or 3..5 live");
   return value;
+}
+
+/** 将 CLI/fixture 前置失败映射为稳定报告类别。 */
+export function classifyCliFailure(error: unknown): EvalFailureClass {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/live eval requires|not a live task/i.test(message)) return "live_provider";
+  if ((error instanceof Error && error.name === "ZodError") ||
+    /fixture|duplicate eval|no eval tasks|eval case not found|eval argument|trials must/i.test(message)) {
+    return "fixture_invalid";
+  }
+  return "internal";
 }

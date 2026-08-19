@@ -1,6 +1,7 @@
+import { summarizeTasks } from "./report-stats.js";
 import type {
+  EvalFailureClass,
   EvalSuiteReport,
-  EvalTaskSummary,
   EvalTrialResult,
 } from "./types.js";
 
@@ -24,50 +25,34 @@ export function buildSuiteReport(
     total: results.length,
     passedCount,
     failedCount: results.length - passedCount,
+    errors: [],
     taskSummaries: summarizeTasks(ordered),
     results: safeResults,
   };
 }
 
-/** 按 task 汇总 pass rate、延迟与 token 方差。 */
-export function summarizeTasks(results: EvalTrialResult[]): EvalTaskSummary[] {
-  const groups = new Map<string, EvalTrialResult[]>();
-  for (const result of results) {
-    const group = groups.get(result.taskId) ?? [];
-    group.push(result);
-    groups.set(result.taskId, group);
-  }
-  return [...groups.entries()].map(([taskId, trials]) => {
-    const latencies = trials.map((trial) => trial.metrics.latencyMs);
-    const tokens = trials.flatMap((trial) =>
-      trial.metrics.totalTokens === null ? [] : [trial.metrics.totalTokens]
-    );
-    const passedCount = trials.filter((trial) => trial.passed).length;
-    return {
-      taskId,
-      trials: trials.length,
-      passedCount,
-      passRate: passedCount / trials.length,
-      latencyMeanMs: mean(latencies) ?? 0,
-      latencyVarianceMs2: variance(latencies) ?? 0,
-      totalTokensMean: mean(tokens),
-      totalTokensVariance: variance(tokens),
-    };
-  });
-}
-
-function mean(values: number[]): number | null {
-  return values.length === 0
-    ? null
-    : values.reduce((total, value) => total + value, 0) / values.length;
-}
-
-function variance(values: number[]): number | null {
-  const average = mean(values);
-  return average === null
-    ? null
-    : values.reduce((total, value) => total + (value - average) ** 2, 0) /
-      values.length;
+/** 在 task 尚未执行时生成仍可上传的结构化失败报告。 */
+export function buildFailedSuiteReport(
+  suite: string,
+  failureClass: EvalFailureClass,
+  message: string,
+): EvalSuiteReport {
+  return {
+    schemaVersion: "agent-eval-report.v1",
+    suite,
+    passed: false,
+    total: 0,
+    passedCount: 0,
+    failedCount: 1,
+    errors: [
+      {
+        failureClass,
+        message: redactReportValue(message) as string,
+      },
+    ],
+    taskSummaries: [],
+    results: [],
+  };
 }
 
 /** 递归移除报告中的凭证、审批 token 与 header。 */

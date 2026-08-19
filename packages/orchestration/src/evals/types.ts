@@ -97,6 +97,12 @@ export type EvalTaskSummary = {
   totalTokensVariance: number | null;
 };
 
+/** Suite 在 task 执行前发生的结构化失败。 */
+export type EvalSuiteError = {
+  failureClass: EvalFailureClass;
+  message: string;
+};
+
 /** 一个 suite 的机器可读报告。 */
 export type EvalSuiteReport = {
   schemaVersion: "agent-eval-report.v1";
@@ -105,6 +111,7 @@ export type EvalSuiteReport = {
   total: number;
   passedCount: number;
   failedCount: number;
+  errors: EvalSuiteError[];
   taskSummaries: EvalTaskSummary[];
   results: EvalTrialResult[];
 };

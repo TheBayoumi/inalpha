@@ -6,6 +6,25 @@ import type {
   RunTrialOptions,
 } from "./types.js";
 
+let networkGuardTail = Promise.resolve();
+
+/** 串行化进程级 fetch 替换，避免并行 trial 互相污染。 */
+export async function acquireNetworkGuardLock(): Promise<() => void> {
+  let releaseLock: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  const previous = networkGuardTail;
+  networkGuardTail = previous.then(() => current);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseLock();
+  };
+}
+
 /** Required lane 禁止任何未声明网络请求，并返回恢复函数。 */
 export function installNetworkGuard(allow: boolean): () => void {
   if (allow) return () => undefined;
@@ -40,6 +59,9 @@ export function numberField(value: unknown, key: string): number | null {
 export function classifyFailure(error: unknown): EvalFailureClass {
   const message = messageOf(error);
   if (message.includes("EVAL_NETWORK_ATTEMPT")) return "network_attempt";
+  if (/tool.*schema|invalid tool input|validation error/i.test(message)) {
+    return "tool_schema";
+  }
   if (/scripted model|unconsumed turn/i.test(message)) return "model_protocol";
   if (/abort|timeout/i.test(message)) return "timeout";
   return "internal";

@@ -1,6 +1,3 @@
-import { RequestContext } from "@mastra/core/request-context";
-
-import { AUTH_SUB_KEY } from "../hooks/with-hooks.js";
 import { createOrchestrator } from "../mastra/agents/create-orchestrator.js";
 import { AskApprovalCache } from "../permissions/ask-cache.js";
 import { wireToolList } from "../mastra/tool-wiring.js";
@@ -9,7 +6,9 @@ import { gradeTrial } from "./grader.js";
 import type { GoldenTask } from "./schema.js";
 import { ScriptedModel } from "./scripted-model.js";
 import { normalizeTrajectory } from "./trajectory.js";
+import { createEvalRequestContext } from "./runner-context.js";
 import {
+  acquireNetworkGuardLock,
   classifyFailure,
   failedResult,
   installNetworkGuard,
@@ -19,6 +18,7 @@ import {
 } from "./runner-helpers.js";
 import type { EvalTrialResult, RunTrialOptions } from "./types.js";
 
+/** 在隔离 Agent 中串行执行一个有预算的评测 trial。 */
 export async function runEvalTrial(
   task: GoldenTask,
   options: RunTrialOptions,
@@ -51,20 +51,17 @@ export async function runEvalTrial(
     tools: Object.fromEntries(wired.map((tool) => [tool.id, tool])),
     maxSteps: task.budget.maxSteps,
   });
-  const entries: Array<readonly [string, unknown]> = [
-    ...Object.entries(task.requestContext),
-    [AUTH_SUB_KEY, `eval:${task.id}`],
-    ["asOf", task.asOf],
-  ];
-  const requestContext = new RequestContext<unknown>(entries);
+  const requestContext = createEvalRequestContext(task);
+  const releaseNetwork = await acquireNetworkGuardLock();
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("eval item timeout")),
     task.budget.timeoutMs,
   );
-  const restoreFetch = installNetworkGuard(options.allowNetwork === true);
+  let restoreFetch: () => void = () => undefined;
 
   try {
+    restoreFetch = installNetworkGuard(options.allowNetwork === true);
     const output = await agent.generate(task.prompt, {
       runId,
       requestContext,
@@ -114,5 +111,6 @@ export async function runEvalTrial(
     clearTimeout(timer);
     askCache.clear();
     restoreFetch();
+    releaseNetwork();
   }
 }
