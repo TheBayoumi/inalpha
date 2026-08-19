@@ -39,6 +39,7 @@ function trial(
 
 describe("agent eval report", () => {
   it("removes nested credentials and unstable error metadata", () => {
+    const githubToken = ["ghp", "abcdefghijklmnopqrstuvwxyz"].join("_");
     expect(
       redactReportValue({
         approvalToken: "token-value",
@@ -54,7 +55,7 @@ describe("agent eval report", () => {
           stack: "hidden",
           safe: "visible",
         },
-        message: "token ghp_abcdefghijklmnopqrstuvwxyz",
+        message: `token ${githubToken}`,
       }),
     ).toEqual({
       approvalToken: "[REDACTED]",
