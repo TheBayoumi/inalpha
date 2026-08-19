@@ -85,6 +85,18 @@ export type GradeInput = {
   trajectory: NormalizedToolCall[];
 };
 
+/** 同一 task 多次 trial 的稳定统计。 */
+export type EvalTaskSummary = {
+  taskId: string;
+  trials: number;
+  passedCount: number;
+  passRate: number;
+  latencyMeanMs: number;
+  latencyVarianceMs2: number;
+  totalTokensMean: number | null;
+  totalTokensVariance: number | null;
+};
+
 /** 一个 suite 的机器可读报告。 */
 export type EvalSuiteReport = {
   schemaVersion: "agent-eval-report.v1";
@@ -93,5 +105,6 @@ export type EvalSuiteReport = {
   total: number;
   passedCount: number;
   failedCount: number;
+  taskSummaries: EvalTaskSummary[];
   results: EvalTrialResult[];
 };

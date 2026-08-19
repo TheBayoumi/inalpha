@@ -18,25 +18,32 @@ export function normalizeTrajectory(
     }
   }
 
-  const executionKeys = executions.map(
-    (event) => `${event.tool}:${stableStringify(event.input)}`,
-  );
+  const remainingExecutions = [...executions];
   const trajectory: NormalizedToolCall[] = [];
   for (const [stepIndex, step] of output.steps.entries()) {
     for (const chunk of step.toolCalls) {
       const payload = chunk.payload;
       const result = results.get(payload.toolCallId);
       const executionKey = `${payload.toolName}:${stableStringify(payload.args ?? {})}`;
-      const executionIndex = executionKeys.indexOf(executionKey);
-      const executed = executionIndex >= 0;
-      if (executed) executionKeys.splice(executionIndex, 1);
+      const executionIndex = remainingExecutions.findIndex(
+        (event) =>
+          `${event.tool}:${stableStringify(event.input)}` === executionKey,
+      );
+      const execution = executionIndex >= 0
+        ? remainingExecutions.splice(executionIndex, 1)[0]
+        : undefined;
+      const executed = execution !== undefined;
       trajectory.push({
         index: trajectory.length,
         step: stepIndex,
         tool: payload.toolName,
         input: sanitizeValue(payload.args ?? {}),
         result: sanitizeValue(result?.result),
-        resultClass: classifyResult(result?.result, result?.isError, executed),
+        resultClass: classifyResult(
+          result?.result,
+          result?.isError,
+          execution?.status,
+        ),
         attempted: true,
         executed,
       });
@@ -49,7 +56,7 @@ export function normalizeTrajectory(
 export function classifyResult(
   result: unknown,
   chunkIsError: boolean | undefined,
-  executed: boolean,
+  executionStatus: ToolExecutionEvent["status"] | undefined,
 ): ResultClass {
   if (result && typeof result === "object") {
     const record = result as Record<string, unknown>;
@@ -62,8 +69,8 @@ export function classifyResult(
     }
     if (record.isError === true) return "tool_error";
   }
-  if (chunkIsError) return "tool_error";
-  return executed ? "success" : "tool_error";
+  if (chunkIsError || executionStatus === "failed") return "tool_error";
+  return executionStatus === "succeeded" ? "success" : "tool_error";
 }
 
 /** 深度排序 JSON key，并移除报告中不应出现的敏感/非稳定字段。 */
@@ -71,7 +78,7 @@ export function sanitizeValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeValue);
   if (!value || typeof value !== "object") return value;
   const output: Record<string, unknown> = {};
-  const blocked = /^(authorization|headers|apiKey|api_key|secret|stack|cause)$/i;
+  const blocked = /^(authorization|headers?|api_?key|client_?secret|private_?key|password|cookies?|set_?cookie|secret|stack|cause|provider_?metadata)$/i;
   for (const key of Object.keys(value as Record<string, unknown>).sort()) {
     output[key] = blocked.test(key)
       ? "[REDACTED]"

@@ -66,10 +66,10 @@ function gradeBudgets(input: GradeInput): GradeFinding {
 }
 
 function gradeOutcome(input: GradeInput): GradeFinding {
-  const text = input.text.toLocaleLowerCase();
+  const text = input.text.toLowerCase();
   const { includesAll, includesNone } = input.task.expected.outcome;
-  const missing = includesAll.filter((value) => !text.includes(value.toLocaleLowerCase()));
-  const forbidden = includesNone.filter((value) => text.includes(value.toLocaleLowerCase()));
+  const missing = includesAll.filter((value) => !text.includes(value.toLowerCase()));
+  const forbidden = includesNone.filter((value) => text.includes(value.toLowerCase()));
   const passed = missing.length === 0 && forbidden.length === 0;
   return finding(
     passed,
