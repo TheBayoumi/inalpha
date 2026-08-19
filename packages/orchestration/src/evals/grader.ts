@@ -19,7 +19,7 @@ function gradeRequiredCalls(input: GradeInput): GradeFinding[] {
       (call) =>
         !used.has(call.index) &&
         call.tool === expected.tool &&
-        (expected.result === undefined || call.resultClass === expected.result) &&
+        call.resultClass === expected.result &&
         (expected.inputSubset === undefined || deepSubset(call.input, expected.inputSubset)),
     );
     if (match) used.add(match.index);

@@ -2,18 +2,26 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseEvalArgs, parseTrialCount } from "../src/evals/cli.js";
+import { classifyCliFailure, parseEvalArgs, parseTrialCount } from "../src/evals/cli.js";
 import { loadGoldenTasks } from "../src/evals/load.js";
-import { buildSuiteReport, formatTrialSummary } from "../src/evals/report.js";
+import {
+  buildFailedSuiteReport,
+  buildSuiteReport,
+  formatTrialSummary,
+} from "../src/evals/report.js";
 import { runEvalTrial } from "../src/evals/runner.js";
 import { EvalSuiteSchema, type GoldenTask } from "../src/evals/schema.js";
-import type { EvalTrialResult, RunTrialOptions } from "../src/evals/types.js";
+import type {
+  EvalSuiteReport,
+  EvalTrialResult,
+  RunTrialOptions,
+} from "../src/evals/types.js";
 
 const args = parseEvalArgs(process.argv.slice(2));
-const suite = EvalSuiteSchema.parse(args.suite ?? "pr");
 const goldenDir = fileURLToPath(new URL("../evals/golden/", import.meta.url));
 
 try {
+  const suite = EvalSuiteSchema.parse(args.suite ?? "pr");
   let tasks = await loadGoldenTasks(goldenDir, suite);
   if (args.caseId) tasks = tasks.filter((task) => task.id === args.caseId);
   if (tasks.length === 0) throw new Error(`eval case not found: ${args.caseId}`);
@@ -33,17 +41,32 @@ try {
   }
 
   const report = buildSuiteReport(suite, results);
-  if (args.report) {
-    await mkdir(dirname(args.report), { recursive: true });
-    await writeFile(args.report, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  }
+  if (args.report) await writeReport(args.report, report);
   console.log(
     `Agent eval ${suite}: ${report.passedCount}/${report.total} passed`,
   );
   if (!report.passed) process.exitCode = 1;
 } catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
+  const message = error instanceof Error ? error.message : String(error);
+  if (args.report) {
+    const report = buildFailedSuiteReport(
+      args.suite ?? "pr",
+      classifyCliFailure(error),
+      message,
+    );
+    try {
+      await writeReport(args.report, report);
+    } catch (reportError) {
+      console.error(`failed to write eval report: ${String(reportError)}`);
+    }
+  }
+  console.error(message);
   process.exitCode = 1;
+}
+
+async function writeReport(path: string, report: EvalSuiteReport): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
 
 async function trialOptions(
