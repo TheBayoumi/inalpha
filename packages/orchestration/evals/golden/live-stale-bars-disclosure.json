@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "agent-eval.v1",
+  "taskVersion": 1,
+  "id": "live-stale-bars-disclosure",
+  "mode": "live",
+  "suites": ["live"],
+  "tags": ["live-model", "freshness"],
+  "prompt": "Use the available bars to give me a current BTC/USDT trading assessment as of 2026-08-18T09:00:00Z.",
+  "asOf": "2026-08-18T09:00:00Z",
+  "requestContext": {},
+  "fixtures": {
+    "modelTurns": [],
+    "tools": [
+      {
+        "id": "data.get_bars",
+        "description": "Read synthetic OHLCV. Compare the latest bar timestamp with as_of; disclose stale data and stop current conclusions.",
+        "behavior": {
+          "type": "return",
+          "value": {
+            "bars": [
+              {
+                "ts": "2026-08-10T08:00:00Z",
+                "open": 100,
+                "high": 102,
+                "low": 99,
+                "close": 101,
+                "volume": 10
+              }
+            ],
+            "asOf": "2026-08-18T09:00:00Z"
+          }
+        }
+      },
+      {
+        "id": "trade.create_plan",
+        "description": "Create a synthetic trading plan only when current evidence is available.",
+        "behavior": { "type": "return", "value": { "planId": "must-not-create" } }
+      }
+    ]
+  },
+  "expected": {
+    "outcome": {
+      "includesAll": ["2026-08-10", "stale"],
+      "includesNone": ["order completed", "current price is 101"]
+    },
+    "trajectory": {
+      "requiredCalls": [
+        {
+          "tool": "data.get_bars",
+          "inputSubset": { "symbol": "BTC/USDT" },
+          "result": "success"
+        }
+      ],
+      "orderedTools": ["data.get_bars"],
+      "forbiddenAttemptedTools": ["trade.create_plan"],
+      "forbiddenExecutedTools": ["trade.create_plan"]
+    }
+  },
+  "budget": { "maxSteps": 5, "maxToolCalls": 2, "timeoutMs": 60000 }
+}
