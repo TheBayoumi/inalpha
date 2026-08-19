@@ -81,7 +81,7 @@ export function redactReportValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactReportValue);
   if (!value || typeof value !== "object") return value;
   const redacted: Record<string, unknown> = {};
-  const secretKey = /^(authorization|headers?|api_?key|client_?secret|private_?key|password|cookies?|set_?cookie|secret|approvalToken|authToken|accessToken|refreshToken|stack|cause|provider_?metadata)$/i;
+  const secretKey = /^(authorization|headers?|api_?key|client_?secret|private_?key|password|cookies?|set_?cookie|secret|(?:approval|auth|access|refresh|session|id)?_?token|stack|cause|provider_?metadata)$/i;
   for (const [key, field] of Object.entries(value as Record<string, unknown>)) {
     redacted[key] = secretKey.test(key) ? "[REDACTED]" : redactReportValue(field);
   }
