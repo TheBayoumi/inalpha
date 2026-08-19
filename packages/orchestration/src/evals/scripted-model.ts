@@ -1,6 +1,7 @@
 import type { LanguageModel } from "@mastra/core/llm";
 
 import type { ModelTurn } from "./schema.js";
+import { EvalFailureError } from "./errors.js";
 
 const USAGE = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
@@ -49,13 +50,21 @@ export class ScriptedModel {
   /** 确保 Agent 没有提前结束并遗留 scripted turn。 */
   assertConsumed(): void {
     if (this.cursor !== this.turns.length) {
-      throw new Error(`script has ${this.turns.length - this.cursor} unconsumed turn(s)`);
+      throw new EvalFailureError(
+        "model_protocol",
+        `script has ${this.turns.length - this.cursor} unconsumed turn(s)`,
+      );
     }
   }
 
   private next(): Generated {
     const turn = this.turns[this.cursor];
-    if (!turn) throw new Error("scripted model received an unexpected extra call");
+    if (!turn) {
+      throw new EvalFailureError(
+        "model_protocol",
+        "scripted model received an unexpected extra call",
+      );
+    }
     const turnIndex = this.cursor++;
     const content = turnContent(turn, turnIndex);
     return {

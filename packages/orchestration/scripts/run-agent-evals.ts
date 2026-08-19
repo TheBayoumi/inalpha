@@ -2,7 +2,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { classifyCliFailure, parseEvalArgs, parseTrialCount } from "../src/evals/cli.js";
+import {
+  classifyCliFailure,
+  findReportPath,
+  parseEvalArgs,
+  parseTrialCount,
+  type EvalCliArgs,
+} from "../src/evals/cli.js";
+import { EvalFailureError } from "../src/evals/errors.js";
 import { loadGoldenTasks } from "../src/evals/load.js";
 import {
   buildFailedSuiteReport,
@@ -17,17 +24,27 @@ import type {
   RunTrialOptions,
 } from "../src/evals/types.js";
 
-const args = parseEvalArgs(process.argv.slice(2));
+const rawArgs = process.argv.slice(2);
+let args: EvalCliArgs = { report: findReportPath(rawArgs) };
 const goldenDir = fileURLToPath(new URL("../evals/golden/", import.meta.url));
 
 try {
+  args = parseEvalArgs(rawArgs);
   const suite = EvalSuiteSchema.parse(args.suite ?? "pr");
   let tasks = await loadGoldenTasks(goldenDir, suite);
   if (args.caseId) tasks = tasks.filter((task) => task.id === args.caseId);
-  if (tasks.length === 0) throw new Error(`eval case not found: ${args.caseId}`);
+  if (tasks.length === 0) {
+    throw new EvalFailureError(
+      "fixture_invalid",
+      `eval case not found: ${args.caseId}`,
+    );
+  }
   const trials = parseTrialCount(args.trials, suite);
   if (suite === "live" && !args.caseId) {
-    throw new Error("live eval requires --case <task-id>");
+    throw new EvalFailureError(
+      "live_provider",
+      "live eval requires --case <task-id>",
+    );
   }
 
   const results: EvalTrialResult[] = [];
@@ -76,15 +93,23 @@ async function trialOptions(
 ): Promise<RunTrialOptions> {
   if (!live) return { trial };
   if (process.env.INALPHA_AGENT_EVAL_LIVE !== "1") {
-    throw new Error("live eval requires INALPHA_AGENT_EVAL_LIVE=1");
+    throw new EvalFailureError(
+      "live_provider",
+      "live eval requires INALPHA_AGENT_EVAL_LIVE=1",
+    );
   }
-  const { buildLLM } = await import("../src/mastra/llm/provider.js");
   const provider = process.env.LLM_PROVIDER?.trim();
   const modelId = process.env.LLM_MODEL?.trim();
   if (!provider || !modelId) {
-    throw new Error("live eval requires explicit LLM_PROVIDER and LLM_MODEL");
+    throw new EvalFailureError(
+      "live_provider",
+      "live eval requires explicit LLM_PROVIDER and LLM_MODEL",
+    );
   }
-  if (task.mode !== "live") throw new Error(`not a live task: ${task.id}`);
+  if (task.mode !== "live") {
+    throw new EvalFailureError("live_provider", `not a live task: ${task.id}`);
+  }
+  const { buildLLM } = await import("../src/mastra/llm/provider.js");
   return {
     trial,
     model: buildLLM(),
