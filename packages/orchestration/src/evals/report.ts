@@ -43,7 +43,7 @@ export function buildFailedSuiteReport(
     passed: false,
     total: 0,
     passedCount: 0,
-    failedCount: 1,
+    failedCount: 0,
     errors: [
       {
         failureClass,

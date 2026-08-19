@@ -1,3 +1,4 @@
+import { classifyEvalError, EvalFailureError } from "./errors.js";
 import type { EvalFailureClass } from "./types.js";
 
 /** Agent Eval CLI 的解析结果。 */
@@ -7,6 +8,14 @@ export type EvalCliArgs = {
   trials?: string;
   report?: string;
 };
+
+/** 从可能损坏的 argv 中只提取失败报告路径。 */
+export function findReportPath(values: string[]): string | undefined {
+  const args = values.filter((value) => value !== "--");
+  const index = args.lastIndexOf("--report");
+  const path = index >= 0 ? args[index + 1] : undefined;
+  return path && !path.startsWith("--") ? path : undefined;
+}
 
 /** 解析显式的成对 CLI 参数，并兼容 pnpm 透传的 `--`。 */
 export function parseEvalArgs(values: string[]): EvalCliArgs {
@@ -22,7 +31,10 @@ export function parseEvalArgs(values: string[]): EvalCliArgs {
     const key = names[args[index] ?? ""];
     const value = args[index + 1];
     if (!key || !value) {
-      throw new Error(`invalid eval argument: ${args[index] ?? ""}`);
+      throw new EvalFailureError(
+        "fixture_invalid",
+        `invalid eval argument: ${args[index] ?? ""}`,
+      );
     }
     parsed[key] = value;
   }
@@ -39,17 +51,16 @@ export function parseTrialCount(
   const valid = Number.isInteger(value) && (live
     ? value >= 3 && value <= 5
     : value === 1);
-  if (!valid) throw new Error("trials must be 1 offline or 3..5 live");
+  if (!valid) {
+    throw new EvalFailureError(
+      "fixture_invalid",
+      "trials must be 1 offline or 3..5 live",
+    );
+  }
   return value;
 }
 
 /** 将 CLI/fixture 前置失败映射为稳定报告类别。 */
 export function classifyCliFailure(error: unknown): EvalFailureClass {
-  const message = error instanceof Error ? error.message : String(error);
-  if (/live eval requires|not a live task/i.test(message)) return "live_provider";
-  if ((error instanceof Error && error.name === "ZodError") ||
-    /fixture|duplicate eval|no eval tasks|eval case not found|eval argument|trials must/i.test(message)) {
-    return "fixture_invalid";
-  }
-  return "internal";
+  return classifyEvalError(error);
 }

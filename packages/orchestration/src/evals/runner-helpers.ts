@@ -1,4 +1,5 @@
 import type { GoldenTask } from "./schema.js";
+import { classifyEvalError, EvalFailureError } from "./errors.js";
 import type {
   EvalFailureClass,
   EvalTrialResult,
@@ -30,7 +31,7 @@ export function installNetworkGuard(allow: boolean): () => void {
   if (allow) return () => undefined;
   const original = globalThis.fetch;
   globalThis.fetch = (async () => {
-    throw new Error("EVAL_NETWORK_ATTEMPT");
+    throw new EvalFailureError("network_attempt", "EVAL_NETWORK_ATTEMPT");
   }) as typeof fetch;
   return () => {
     globalThis.fetch = original;
@@ -57,14 +58,7 @@ export function numberField(value: unknown, key: string): number | null {
 
 /** 将 runtime 异常归类为稳定失败码。 */
 export function classifyFailure(error: unknown): EvalFailureClass {
-  const message = messageOf(error);
-  if (message.includes("EVAL_NETWORK_ATTEMPT")) return "network_attempt";
-  if (/tool.*schema|invalid tool input|validation error/i.test(message)) {
-    return "tool_schema";
-  }
-  if (/scripted model|unconsumed turn/i.test(message)) return "model_protocol";
-  if (/abort|timeout/i.test(message)) return "timeout";
-  return "internal";
+  return classifyEvalError(error);
 }
 
 /** 生成在 Agent 尚未返回 FullOutput 时使用的失败结果。 */

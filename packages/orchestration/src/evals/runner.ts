@@ -1,6 +1,7 @@
 import { createOrchestrator } from "../mastra/agents/create-orchestrator.js";
 import { AskApprovalCache } from "../permissions/ask-cache.js";
 import { wireToolList } from "../mastra/tool-wiring.js";
+import { EvalFailureError } from "./errors.js";
 import { createFixtureTools } from "./fixture-tools.js";
 import { gradeTrial } from "./grader.js";
 import type { GoldenTask } from "./schema.js";
@@ -18,7 +19,7 @@ import {
 } from "./runner-helpers.js";
 import type { EvalTrialResult, RunTrialOptions } from "./types.js";
 
-/** 在隔离 Agent 中串行执行一个有预算的评测 trial。 */
+/** 串行执行隔离评测。 */
 export async function runEvalTrial(
   task: GoldenTask,
   options: RunTrialOptions,
@@ -55,7 +56,7 @@ export async function runEvalTrial(
   const releaseNetwork = await acquireNetworkGuardLock();
   const controller = new AbortController();
   const timer = setTimeout(
-    () => controller.abort(new Error("eval item timeout")),
+    () => controller.abort(new EvalFailureError("timeout", "eval item timeout")),
     task.budget.timeoutMs,
   );
   let restoreFetch: () => void = () => undefined;
