@@ -27,14 +27,8 @@
  * - 现阶段不接 permission engine，仅留 ``permissionResolver`` 参数。task #3 接入。
  */
 import { projectApprovalInput } from "../permissions/approval-identity.js";
-import {
-  type AskApprovalCache,
-  defaultAskCache,
-} from "../permissions/ask-cache.js";
-import {
-  type PendingApprovalsStore,
-  pendingApprovals as defaultPendingApprovals,
-} from "../permissions/pending.js";
+import type { AskApprovalCache } from "../permissions/ask-cache.js";
+import type { PendingApprovalsStore } from "../permissions/pending.js";
 import type { HookRunner } from "./runner.js";
 
 /**
@@ -158,6 +152,9 @@ export type PermissionResolver = (
   input: unknown,
 ) => Promise<"allow" | "ask" | "deny"> | "allow" | "ask" | "deny";
 
+/** Eval 可注入的最小挂起审批接口，避免加载生产持久层。 */
+export type PendingApprovalsLike = Pick<PendingApprovalsStore, "request">;
+
 export type WithHooksOptions = {
   runner: HookRunner;
   /** 可选权限解析器（task #3 接入）；缺省视为 allow。 */
@@ -169,7 +166,7 @@ export type WithHooksOptions = {
    * CLI / Web 入口（GET /permissions/pending）查看。缺省用模块级单例（同
    * ``mastra/index.ts`` 注册 HTTP routes 用的 store）。测试可注入 fresh 实例隔离。
    */
-  pendingApprovals?: PendingApprovalsStore;
+  pendingApprovals?: PendingApprovalsLike;
   /** ask 路径 store 超时毫秒数；缺省 30_000（30 秒）。0 / 负数视作默认。 */
   askTimeoutMs?: number;
   /**
@@ -254,8 +251,12 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
           //
           // 同时把请求挂进 PendingApprovalsStore（fire-and-forget）—— GET
           // /permissions/pending 仍能列出来，为未来 CLI / Web 入口保留。
-          const cache = opts.askCache ?? defaultAskCache;
-          const store = opts.pendingApprovals ?? defaultPendingApprovals;
+          const cache =
+            opts.askCache ??
+            (await import("../permissions/ask-cache.js")).defaultAskCache;
+          const store =
+            opts.pendingApprovals ??
+            (await import("../permissions/pending.js")).pendingApprovals;
           const timeoutMs =
             opts.askTimeoutMs && opts.askTimeoutMs > 0 ? opts.askTimeoutMs : undefined;
 

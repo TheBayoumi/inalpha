@@ -39,23 +39,16 @@
  * MARKET/动态段在尾部 → 只有尾巴变化，缓存命中率 >90%。
  */
 import "../../env.js"; // side-effect: dotenv 加载根 .env（必须在 buildLLM 之前）
-import { Agent } from "@mastra/core/agent";
-import { TokenLimiterProcessor } from "@mastra/core/processors";
-
 import { buildUserAwareModel } from "../llm/provider.js";
 import { sharedMemory } from "../memory.js";
 import {
   createPaperPendingPlanFetcher,
   createPendingPlanNoticeProcessor,
 } from "../../hooks/index.js";
-import { buildInstructions } from "./instructions/index.js";
+import { createOrchestrator } from "./create-orchestrator.js";
 import { loadWiredMcpTools, wiredOrchestratorTools } from "../wired-tools.js";
 
-export const orchestrator = new Agent({
-  id: "orchestrator",
-  name: "orchestrator",
-  // D-13：prompt 分层注入 —— buildInstructions() 按稳定性排序组合全部模块
-  instructions: buildInstructions,
+export const orchestrator = createOrchestrator({
   model: buildUserAwareModel(),
   // D-8a'：不挂 subagent，全部能力 tool 化直接调
   // D-10（ADR-0009）：tools 用 dynamic 函数——静态内置 tool + 可插拔 MCP tool 合并。
@@ -67,27 +60,10 @@ export const orchestrator = new Agent({
     );
   },
   memory: sharedMemory,
-  // 上下文 token 兜底（2026-06-11 事故：单线程消息历史滚到 1.3M token 撑爆
-  // DeepSeek 1M 上限 → INCOMPLETE_STREAM、线程报废）。tool 层已对已知大输出
-  // 降采样/截断，这里是**第二道防线**：消息历史超预算时从最旧裁起（保 system），
-  // processInputStep 在多步 tool loop 中每步修剪，防单 turn 内滚雪球。
-  // 500k ≈ 模型上限（1M）的一半——历史预算给足，剩余一半留给
-  // instructions / tool schema / 召回注入 / 输出。tool 输出已限幅后，
-  // 500k ≈ 几十轮深度研究对话，正常使用几乎摸不到。
-  inputProcessors: [
-    new TokenLimiterProcessor({ limit: 500_000, trimMode: "contiguous" }),
-  ],
   // issue #65 / ADR-0010 §Stop hook：chat 路径的 pending plan 残留警示。
-  // Mastra 1.36 无"turn 结束后强制续 loop"钩子位，chat 侧降级为输出警示
-  // （追加到最终回复，用户与下一 turn 的 LLM 都能看见）；真·强制续 turn
-  // 在 scheduler runner（我们自己持有 generate 循环）实现。
+  // Mastra 1.36 无"turn 结束后强制续 loop"钩子位，chat 侧降级为输出警示。
   outputProcessors: [
     createPendingPlanNoticeProcessor({ fetcher: createPaperPendingPlanFetcher() }),
   ],
-  defaultOptions: {
-    // 40 步：skill 驱动的深度调研（serenity 类）一轮要 2 次 skill.read +
-    // 10+ 次搜索 + 逐源 fetch + 财务核验，旧上限 15 连搜索都不够（ADR-0046 follow-up）。
-    // 普通对话不受影响——maxSteps 是上限不是配额。
-    maxSteps: 40,
-  },
+  maxSteps: 40,
 });
