@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deepSubset, gradeTrial } from "../../src/evals/grader.js";
+import { gradeTrial } from "../../src/evals/grader.js";
 import type { GoldenTask } from "../../src/evals/schema.js";
 import type { NormalizedToolCall } from "../../src/evals/types.js";
 
@@ -20,8 +20,12 @@ function task(): GoldenTask {
       outcome: { includesAll: ["done"], includesNone: ["fabricated"] },
       trajectory: {
         requiredCalls: [
-          { tool: "data.read", inputSubset: { query: { symbol: "AAPL" } } },
-          { tool: "data.read" },
+          {
+            tool: "data.read",
+            inputSubset: { query: { symbol: "AAPL" } },
+            result: "success",
+          },
+          { tool: "data.read", result: "success" },
         ],
         orderedTools: ["data.read", "research.run"],
         forbiddenAttemptedTools: [],
@@ -51,15 +55,6 @@ function call(
 }
 
 describe("agent eval grader", () => {
-  it("matches nested partial inputs", () => {
-    expect(
-      deepSubset(
-        { query: { symbol: "AAPL", venue: "nasdaq" }, limit: 10 },
-        { query: { symbol: "AAPL" } },
-      ),
-    ).toBe(true);
-  });
-
   it("uses call multiplicity and ordered subsequences", () => {
     const findings = gradeTrial({
       task: task(),
@@ -88,6 +83,48 @@ describe("agent eval grader", () => {
     });
     expect(findings).toContainEqual(
       expect.objectContaining({ passed: false, failureClass: "permission_violation" }),
+    );
+  });
+
+  it("rejects result mismatches and broken order", () => {
+    const trajectory = [
+      call(0, "research.run"),
+      call(1, "data.read", { query: { symbol: "AAPL" } }),
+      call(2, "data.read"),
+    ];
+    trajectory[1]!.resultClass = "tool_error";
+    const findings = gradeTrial({ task: task(), text: "done", steps: 3, trajectory });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ passed: false, message: "required call missing: data.read" }),
+        expect.objectContaining({ passed: false, message: "ordered tool subsequence" }),
+      ]),
+    );
+  });
+
+  it("checks attempted tools, budgets, and final text", () => {
+    const evalTask = task();
+    evalTask.expected.trajectory.forbiddenAttemptedTools = ["paper.write"];
+    const findings = gradeTrial({
+      task: evalTask,
+      text: "fabricated",
+      steps: 5,
+      trajectory: [
+        call(0, "data.read", { query: { symbol: "AAPL" } }),
+        call(1, "data.read"),
+        call(2, "research.run"),
+        call(3, "paper.write", {}, false),
+        call(4, "extra.read"),
+      ],
+    });
+
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ passed: false, message: "forbidden attempt: paper.write" }),
+        expect.objectContaining({ passed: false, failureClass: "step_budget" }),
+        expect.objectContaining({ passed: false, failureClass: "outcome_mismatch" }),
+      ]),
     );
   });
 });
