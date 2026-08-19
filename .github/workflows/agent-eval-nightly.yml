@@ -1,0 +1,44 @@
+name: Agent Eval Nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-eval-nightly
+  cancel-in-progress: true
+
+jobs:
+  offline-agent-eval:
+    name: orchestration · full offline agent eval
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/orchestration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: packages/orchestration/pnpm-lock.yaml
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+      - name: Run full offline agent evals
+        run: pnpm eval:nightly -- --report "$RUNNER_TEMP/agent-eval-nightly.json"
+      - name: Upload agent eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-eval-nightly
+          path: ${{ runner.temp }}/agent-eval-nightly.json
+          if-no-files-found: warn
+          retention-days: 30
