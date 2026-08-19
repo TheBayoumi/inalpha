@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { EvalFailureError } from "../../src/evals/errors.js";
 import {
   classifyCliFailure,
   parseEvalArgs,
@@ -35,10 +36,12 @@ describe("agent eval CLI guards", () => {
   });
 
   it("classifies fixture and live-provider failures", () => {
-    expect(classifyCliFailure(new Error("invalid eval fixture broken.json")))
-      .toBe("fixture_invalid");
-    expect(classifyCliFailure(new Error("live eval requires explicit model")))
-      .toBe("live_provider");
+    expect(
+      classifyCliFailure(new EvalFailureError("fixture_invalid", "broken")),
+    ).toBe("fixture_invalid");
+    expect(
+      classifyCliFailure(new EvalFailureError("live_provider", "missing model")),
+    ).toBe("live_provider");
     expect(classifyCliFailure(new Error("unexpected"))).toBe("internal");
   });
 });

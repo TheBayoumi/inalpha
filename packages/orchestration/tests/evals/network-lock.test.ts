@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { runEvalTrial } from "../../src/evals/runner.js";
 import { GoldenTaskSchema } from "../../src/evals/schema.js";
+import { makeValidGoldenTask } from "./task-fixture.js";
 
 function delayedModel(onStart: () => void, onEnd: () => void): LanguageModel {
   return {
@@ -41,28 +42,23 @@ describe("agent eval network guard lock", () => {
         active -= 1;
       },
     );
-    const task = GoldenTaskSchema.parse({
-      schemaVersion: "agent-eval.v1",
-      taskVersion: 1,
-      id: "parallel-lock",
-      mode: "live",
-      suites: ["live"],
-      tags: [],
-      prompt: "done",
-      asOf: "2026-08-18T09:00:00Z",
-      requestContext: {},
-      fixtures: { modelTurns: [], tools: [] },
-      expected: {
-        outcome: { includesAll: ["done"], includesNone: [] },
-        trajectory: {
-          requiredCalls: [],
-          orderedTools: [],
-          forbiddenAttemptedTools: [],
-          forbiddenExecutedTools: [],
+    const task = GoldenTaskSchema.parse(
+      makeValidGoldenTask({
+        id: "parallel-lock",
+        mode: "live",
+        suites: ["live"],
+        fixtures: { modelTurns: [], tools: [] },
+        expected: {
+          outcome: { includesAll: ["done"], includesNone: [] },
+          trajectory: {
+            requiredCalls: [],
+            orderedTools: [],
+            forbiddenAttemptedTools: [],
+            forbiddenExecutedTools: [],
+          },
         },
-      },
-      budget: { maxSteps: 2, maxToolCalls: 0, timeoutMs: 1000 },
-    });
+      }),
+    );
 
     try {
       const results = await Promise.all([
