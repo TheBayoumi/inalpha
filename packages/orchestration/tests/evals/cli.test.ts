@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  classifyCliFailure,
   parseEvalArgs,
   parseTrialCount,
 } from "../../src/evals/cli.js";
@@ -31,5 +32,13 @@ describe("agent eval CLI guards", () => {
     expect(parseTrialCount("5", "live")).toBe(5);
     expect(() => parseTrialCount("2", "live")).toThrow("3..5 live");
     expect(() => parseTrialCount("2", "nightly")).toThrow("1 offline");
+  });
+
+  it("classifies fixture and live-provider failures", () => {
+    expect(classifyCliFailure(new Error("invalid eval fixture broken.json")))
+      .toBe("fixture_invalid");
+    expect(classifyCliFailure(new Error("live eval requires explicit model")))
+      .toBe("live_provider");
+    expect(classifyCliFailure(new Error("unexpected"))).toBe("internal");
   });
 });

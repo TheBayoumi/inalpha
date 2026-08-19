@@ -20,4 +20,17 @@ describe("agent eval deep subset", () => {
       ),
     ).toBe(true);
   });
+
+  it("rejects mismatched, missing, short, and primitive values", () => {
+    const cases: Array<[unknown, unknown]> = [
+      [{ nested: { value: 1 } }, { nested: { value: 2 } }],
+      [{}, { missing: true }],
+      [[1], [1, 2]],
+      [null, { value: 1 }],
+      ["1", 1],
+    ];
+    for (const [actual, expected] of cases) {
+      expect(deepSubset(actual, expected)).toBe(false);
+    }
+  });
 });

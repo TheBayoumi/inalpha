@@ -2,48 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import { toMastraDatasetItem } from "../../src/evals/dataset-item.js";
 import { GoldenTaskSchema } from "../../src/evals/schema.js";
-
-function validTask(): Record<string, unknown> {
-  return {
-    schemaVersion: "agent-eval.v1",
-    taskVersion: 1,
-    id: "valid-task",
-    mode: "scripted",
-    suites: ["pr"],
-    tags: [],
-    prompt: "test",
-    asOf: "2026-08-18T09:00:00Z",
-    requestContext: {},
-    fixtures: {
-      modelTurns: [{ type: "text", text: "done" }],
-      tools: [],
-    },
-    expected: {
-      outcome: { includesAll: [], includesNone: [] },
-      trajectory: {
-        requiredCalls: [],
-        orderedTools: [],
-        forbiddenAttemptedTools: [],
-        forbiddenExecutedTools: [],
-      },
-    },
-    budget: { maxSteps: 2, maxToolCalls: 0, timeoutMs: 1000 },
-  };
-}
+import { makeValidGoldenTask } from "./task-fixture.js";
 
 describe("GoldenTaskSchema", () => {
   it("accepts a complete versioned task", () => {
-    expect(GoldenTaskSchema.safeParse(validTask()).success).toBe(true);
+    expect(GoldenTaskSchema.safeParse(makeValidGoldenTask()).success).toBe(true);
   });
 
   it("rejects unknown top-level fields", () => {
     expect(
-      GoldenTaskSchema.safeParse({ ...validTask(), unexpected: true }).success,
+      GoldenTaskSchema.safeParse({ ...makeValidGoldenTask(), unexpected: true }).success,
     ).toBe(false);
   });
 
   it("rejects duplicate fixture tools", () => {
-    const task = validTask();
+    const task = makeValidGoldenTask();
     task.fixtures = {
       modelTurns: [{ type: "text", text: "done" }],
       tools: [
@@ -55,7 +28,7 @@ describe("GoldenTaskSchema", () => {
   });
 
   it("rejects undeclared scripted tools and non-terminal scripts", () => {
-    const task = validTask();
+    const task = makeValidGoldenTask();
     task.fixtures = {
       modelTurns: [
         { type: "tool-call", call: { tool: "data.missing", input: {} } },
@@ -66,7 +39,7 @@ describe("GoldenTaskSchema", () => {
   });
 
   it("rejects an intermediate text turn that would stop the loop early", () => {
-    const task = validTask();
+    const task = makeValidGoldenTask();
     task.fixtures = {
       modelTurns: [
         { type: "text", text: "premature" },
@@ -80,7 +53,7 @@ describe("GoldenTaskSchema", () => {
   it("requires live tasks to belong to the live suite", () => {
     expect(
       GoldenTaskSchema.safeParse({
-        ...validTask(),
+        ...makeValidGoldenTask(),
         mode: "live",
         suites: ["nightly"],
       }).success,
@@ -88,7 +61,7 @@ describe("GoldenTaskSchema", () => {
   });
 
   it("maps the git fixture to Mastra Dataset fields", () => {
-    const task = GoldenTaskSchema.parse(validTask());
+    const task = GoldenTaskSchema.parse(makeValidGoldenTask());
     expect(toMastraDatasetItem(task)).toMatchObject({
       input: { prompt: "test", asOf: "2026-08-18T09:00:00Z" },
       groundTruth: task.expected.outcome,

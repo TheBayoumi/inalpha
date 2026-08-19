@@ -75,6 +75,28 @@ describe("agent eval report", () => {
     });
   });
 
+  it("redacts the final suite artifact, not only the helper", () => {
+    const secret = ["secret", "value"].join("-");
+    const result = trial("sensitive-task", 1, true, 1, 2);
+    result.text = `Bearer ${secret}`;
+    result.trajectory = [
+      {
+        index: 0,
+        step: 0,
+        tool: "trade.execute_plan",
+        input: { token: secret },
+        result: { authorization: secret },
+        resultClass: "success",
+        attempted: true,
+        executed: true,
+      },
+    ];
+
+    const serialized = JSON.stringify(buildSuiteReport("pr", [result]));
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toContain("[REDACTED]");
+  });
+
   it("sorts trials and reports pass-rate, latency, and token variance", () => {
     const report = buildSuiteReport("live", [
       trial("task-b", 1, true, 5, null),

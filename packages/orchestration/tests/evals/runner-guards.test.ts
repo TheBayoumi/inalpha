@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import type { LanguageModel } from "@mastra/core/llm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadGoldenTasks } from "../../src/evals/load.js";
 import { runEvalTrial } from "../../src/evals/runner.js";
@@ -9,8 +9,14 @@ import { GoldenTaskSchema } from "../../src/evals/schema.js";
 
 const goldenDir = fileURLToPath(new URL("../../evals/golden/", import.meta.url));
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 describe("agent eval runner guards", () => {
   it("isolates approval cache state between trials", async () => {
+    const baselineFetch = vi.fn(async () => new Response("baseline"));
+    vi.stubGlobal("fetch", baselineFetch);
     const tasks = await loadGoldenTasks(goldenDir, "pr");
     const task = tasks.find(
       (candidate) => candidate.id === "ask-first-attempt-fail-closed",
@@ -26,9 +32,13 @@ describe("agent eval runner guards", () => {
         executed: false,
       });
     }
+    expect(baselineFetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toBe(baselineFetch);
   });
 
-  it("blocks undeclared network access", async () => {
+  it("blocks undeclared network access and restores fetch", async () => {
+    const baselineFetch = vi.fn(async () => new Response("baseline"));
+    vi.stubGlobal("fetch", baselineFetch);
     const task = GoldenTaskSchema.parse({
       schemaVersion: "agent-eval.v1",
       taskVersion: 1,
@@ -67,6 +77,8 @@ describe("agent eval runner guards", () => {
 
     const result = await runEvalTrial(task, { trial: 1, model: networkModel });
     expect(result).toMatchObject({ passed: false, failureClass: "network_attempt" });
+    expect(baselineFetch).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toBe(baselineFetch);
   });
 
   it("fails closed when a live task has no explicit model", async () => {
