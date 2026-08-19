@@ -2,13 +2,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseEvalArgs, parseTrialCount } from "../src/evals/cli.js";
 import { loadGoldenTasks } from "../src/evals/load.js";
 import { buildSuiteReport, formatTrialSummary } from "../src/evals/report.js";
 import { runEvalTrial } from "../src/evals/runner.js";
 import { EvalSuiteSchema, type GoldenTask } from "../src/evals/schema.js";
 import type { EvalTrialResult, RunTrialOptions } from "../src/evals/types.js";
 
-const args = parseArgs(process.argv.slice(2));
+const args = parseEvalArgs(process.argv.slice(2));
 const suite = EvalSuiteSchema.parse(args.suite ?? "pr");
 const goldenDir = fileURLToPath(new URL("../evals/golden/", import.meta.url));
 
@@ -16,7 +17,7 @@ try {
   let tasks = await loadGoldenTasks(goldenDir, suite);
   if (args.caseId) tasks = tasks.filter((task) => task.id === args.caseId);
   if (tasks.length === 0) throw new Error(`eval case not found: ${args.caseId}`);
-  const trials = parseTrials(args.trials, suite);
+  const trials = parseTrialCount(args.trials, suite);
   if (suite === "live" && !args.caseId) {
     throw new Error("live eval requires --case <task-id>");
   }
@@ -67,34 +68,4 @@ async function trialOptions(
     modelDescriptor: { provider, modelId },
     allowNetwork: true,
   };
-}
-
-function parseTrials(raw: string | undefined, suite: string): number {
-  const value = raw === undefined ? (suite === "live" ? 3 : 1) : Number(raw);
-  const valid = Number.isInteger(value) && value >= 1 && value <= (suite === "live" ? 5 : 1);
-  if (!valid) throw new Error("trials must be 1 offline or 1..5 live");
-  return value;
-}
-
-function parseArgs(values: string[]): {
-  suite?: string;
-  caseId?: string;
-  trials?: string;
-  report?: string;
-} {
-  const parsed: Record<string, string> = {};
-  const args = values.filter((value) => value !== "--");
-  const names: Record<string, string> = {
-    "--suite": "suite",
-    "--case": "caseId",
-    "--trials": "trials",
-    "--report": "report",
-  };
-  for (let index = 0; index < args.length; index += 2) {
-    const key = names[args[index] ?? ""];
-    const value = args[index + 1];
-    if (!key || !value) throw new Error(`invalid eval argument: ${args[index] ?? ""}`);
-    parsed[key] = value;
-  }
-  return parsed;
 }

@@ -16,7 +16,7 @@ const RequiredCallSchema = z
   .object({
     tool: z.string().min(1),
     inputSubset: z.record(z.string(), z.unknown()).optional(),
-    result: ResultClassSchema.optional(),
+    result: ResultClassSchema,
   })
   .strict();
 
@@ -27,13 +27,13 @@ export const GoldenTaskSchema = z
     id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     mode: z.enum(["scripted", "live"]),
     suites: z.array(EvalSuiteSchema).min(1),
-    tags: z.array(z.string().min(1)).default([]),
+    tags: z.array(z.string().min(1)),
     prompt: z.string().min(1),
     asOf: z.iso.datetime({ offset: true }),
-    requestContext: z.record(z.string(), z.unknown()).default({}),
+    requestContext: z.record(z.string(), z.unknown()),
     fixtures: z
       .object({
-        modelTurns: z.array(ModelTurnSchema).default([]),
+        modelTurns: z.array(ModelTurnSchema),
         tools: z.array(FixtureToolSchema),
       })
       .strict(),
@@ -41,16 +41,16 @@ export const GoldenTaskSchema = z
       .object({
         outcome: z
           .object({
-            includesAll: z.array(z.string().min(1)).default([]),
-            includesNone: z.array(z.string().min(1)).default([]),
+            includesAll: z.array(z.string().min(1)),
+            includesNone: z.array(z.string().min(1)),
           })
           .strict(),
         trajectory: z
           .object({
-            requiredCalls: z.array(RequiredCallSchema).default([]),
-            orderedTools: z.array(z.string().min(1)).default([]),
-            forbiddenAttemptedTools: z.array(z.string().min(1)).default([]),
-            forbiddenExecutedTools: z.array(z.string().min(1)).default([]),
+            requiredCalls: z.array(RequiredCallSchema),
+            orderedTools: z.array(z.string().min(1)),
+            forbiddenAttemptedTools: z.array(z.string().min(1)),
+            forbiddenExecutedTools: z.array(z.string().min(1)),
           })
           .strict(),
       })
@@ -67,7 +67,7 @@ export const GoldenTaskSchema = z
   .superRefine((task, ctx) => {
     const toolIds = task.fixtures.tools.map((tool) => tool.id);
     if (new Set(toolIds).size !== toolIds.length) {
-      ctx.addIssue({ code: "custom", message: "duplicate fixture tool id" });
+      ctx.addIssue({ code: "custom", message: "duplicate id" });
     }
     const scriptedCalls = task.fixtures.modelTurns.flatMap((turn) =>
       turn.type === "tool-call" ? [turn.call] : turn.type === "tool-calls" ? turn.calls : [],
@@ -76,7 +76,7 @@ export const GoldenTaskSchema = z
       if (!toolIds.includes(call.tool)) {
         ctx.addIssue({
           code: "custom",
-          message: `undeclared scripted tool: ${call.tool}`,
+          message: `undeclared model tool: ${call.tool}`,
         });
       }
     }
@@ -94,16 +94,21 @@ export const GoldenTaskSchema = z
     if (task.mode === "scripted") {
       const turns = task.fixtures.modelTurns;
       if (turns.length === 0 || turns.at(-1)?.type !== "text" || turns.slice(0, -1).some((turn) => turn.type === "text")) {
-        ctx.addIssue({ code: "custom", message: "script must end with its only text turn" });
+        ctx.addIssue({ code: "custom", message: "script requires one final text turn" });
       }
-    } else if (
-      !task.suites.includes("live") ||
-      task.suites.some((suite) => suite !== "live")
-    ) {
-      ctx.addIssue({ code: "custom", message: "live task must use only live suite" });
+    } else {
+      if (task.fixtures.modelTurns.length !== 0) {
+        ctx.addIssue({ code: "custom", message: "live task has model turns" });
+      }
+      if (
+        !task.suites.includes("live") ||
+        task.suites.some((suite) => suite !== "live")
+      ) {
+        ctx.addIssue({ code: "custom", message: "live task must use only live suite" });
+      }
     }
     if (task.mode === "scripted" && task.suites.includes("live")) {
-      ctx.addIssue({ code: "custom", message: "scripted task cannot use live suite" });
+      ctx.addIssue({ code: "custom", message: "scripted in live suite" });
     }
   });
 

@@ -50,9 +50,14 @@ export function createFixtureTools(task: GoldenTask): FixtureToolSet {
 /** 等待固定时长，并响应 Agent 的取消信号。 */
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
+    const cleanup = () => signal?.removeEventListener("abort", abort);
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
     const abort = () => {
       clearTimeout(timer);
+      cleanup();
       reject(signal?.reason ?? new Error("fixture tool aborted"));
     };
     if (signal?.aborted) {
