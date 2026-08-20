@@ -46,27 +46,34 @@ export const identityMiddleware: MiddlewareHandler = async (c, next) => {
     // Invalid user configuration falls back to the configured model path.
   }
 
-  try {
-    const authz = c.req.header("Authorization");
-    const token = authz?.startsWith("Bearer ") ? authz.slice(7).trim() : undefined;
-    if (token) {
-      const payload = await verifyToken(token);
-      const sub = typeof payload.sub === "string" && payload.sub ? payload.sub : undefined;
-      if (sub) {
-        const requestContext = c.get("requestContext") as { set?: (key: string, value: unknown) => void } | undefined;
-        if (typeof requestContext?.set === "function") {
-          requestContext.set(AUTH_SUB_KEY, sub);
-        } else if (!warnedNoRequestContext) {
-          warnedNoRequestContext = true;
-          console.warn("[identity-mw] requestContext unavailable; authenticated scope was not injected");
-        }
-      }
+  const authz = c.req.header("Authorization");
+  if (authz !== undefined) {
+    const match = /^Bearer\s+(.+)$/i.exec(authz.trim());
+    if (!match?.[1]) {
+      return c.json({ error: "unauthorized" }, 401);
     }
-  } catch (error) {
-    const code = (error as { code?: unknown } | null)?.code;
-    if (code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" && !warnedAuthSignature) {
-      warnedAuthSignature = true;
-      console.warn("[identity-mw] Bearer signature verification failed; check JWT_SECRET");
+    try {
+      const payload = await verifyToken(match[1].trim());
+      const sub = typeof payload.sub === "string" && payload.sub.trim() ? payload.sub : undefined;
+      if (!sub) return c.json({ error: "unauthorized" }, 401);
+      const requestContext = c.get("requestContext") as
+        | { set?: (key: string, value: unknown) => void }
+        | undefined;
+      if (typeof requestContext?.set !== "function") {
+        if (!warnedNoRequestContext) {
+          warnedNoRequestContext = true;
+          console.warn("[identity-mw] requestContext unavailable; rejecting authenticated request");
+        }
+        return c.json({ error: "identity_context_unavailable" }, 503);
+      }
+      requestContext.set(AUTH_SUB_KEY, sub);
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" && !warnedAuthSignature) {
+        warnedAuthSignature = true;
+        console.warn("[identity-mw] Bearer signature verification failed; check JWT_SECRET");
+      }
+      return c.json({ error: "unauthorized" }, 401);
     }
   }
 

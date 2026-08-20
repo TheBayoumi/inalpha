@@ -63,13 +63,45 @@ describe("identityMiddleware", () => {
     expect(requestContext.get(AUTH_SUB_KEY)).toBe("user:alice");
   });
 
-  it("does not inject a subject for an invalid Bearer token", async () => {
+  it("returns 401 for an invalid Bearer token", async () => {
     const requestContext = new Map<string, unknown>();
     const response = await appWithRequestContext(requestContext).request("/", {
       headers: { Authorization: "Bearer invalid-token" },
     });
 
+    expect(response.status).toBe(401);
+    expect(requestContext.has(AUTH_SUB_KEY)).toBe(false);
+  });
+
+  it("rejects a verified Bearer when request context is unavailable", async () => {
+    const app = new Hono();
+    app.use("*", identityMiddleware);
+    app.get("/", (context) => context.text("ok"));
+
+    const response = await app.request("/", {
+      headers: { Authorization: `Bearer ${await mintServiceToken({ sub: "user:alice" })}` },
+    });
+
+    expect(response.status).toBe(503);
+  });
+
+  it("keeps the unauthenticated dev path when no Bearer header is present", async () => {
+    const requestContext = new Map<string, unknown>();
+    const response = await appWithRequestContext(requestContext).request("/");
+
     expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(requestContext.has(AUTH_SUB_KEY)).toBe(false);
+  });
+
+  it("returns 401 for an expired Bearer token", async () => {
+    const requestContext = new Map<string, unknown>();
+    const expired = await mintServiceToken({ sub: "user:alice" }, -1);
+    const response = await appWithRequestContext(requestContext).request("/", {
+      headers: { Authorization: `Bearer ${expired}` },
+    });
+
+    expect(response.status).toBe(401);
     expect(requestContext.has(AUTH_SUB_KEY)).toBe(false);
   });
 });

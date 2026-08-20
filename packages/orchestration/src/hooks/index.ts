@@ -14,6 +14,7 @@ export { HookRunner } from "./runner.js";
 export { toolMatches } from "./matcher.js";
 export {
   withHooks,
+  defaultGetAuthSub,
   defaultGetSessionId,
   defaultGetTurnId,
   AUTH_SUB_KEY,

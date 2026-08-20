@@ -28,10 +28,6 @@
  */
 import { projectApprovalInput } from "../permissions/approval-identity.js";
 import {
-  type AskApprovalCache,
-  defaultAskCache,
-} from "../permissions/ask-cache.js";
-import {
   type PendingApprovalsStore,
   pendingApprovals as defaultPendingApprovals,
 } from "../permissions/pending.js";
@@ -58,96 +54,47 @@ type GenericTool = {
  */
 export const AUTH_SUB_KEY = "inalpha__authSub";
 
-/** Module-level flag：进程内仅 warn 一次 runId fallback / 完全失败，避免每次 tool 调用刷屏。 */
-let _warnedRunIdFallback = false;
-
 /**
- * 默认 sessionId 抽取器：按优先级从 Mastra runtime context 取**conversation 级**
- * 稳定的 ID。
+ * 提取 conversation 级稳定 ID；明确忽略每轮变化的 ``runId``。
  *
- * Mastra 1.10 实测 ``ToolExecutionContext`` 结构：
- *
- * - ``ctx.agent.threadId`` —— **整个对话线程**内稳定（这是想要的）
- * - ``ctx.agent.resourceId`` —— per-user / per-resource，跨 thread 稳定
- * - ``ctx.runId`` —— **每个 user-turn 一个新值**（不稳定，跨 turn 会变）
- * - 顶层 ``ctx.threadId`` 在 1.10 已**不再存在**（被移进 ``ctx.agent``）
- *
- * 因此优先级：``requestContext[AUTH_SUB_KEY]``（mastra server.middleware 从 Bearer 注入的
- * **已认证主体**，#91 多租户隔离的权威 scope）> ``ctx.agent.threadId`` >
- * ``ctx.agent.resourceId`` > ``requestContext.sessionId`` > 顶层 ``sessionId`` >
- * **undefined**（→ askCache 用稳定的 ``"__global__"`` scope）。
- *
- * **故意不回退到 ``ctx.runId``**：runId 每 user-turn 一个新值，当 askCache key 会让
- * 跨 turn 审批永远 miss → 死循环（ADR-0018）。stable ``__global__`` 比 unstable runId
- * 更对：跨 turn 能命中，approvalKey 里的 candidateId 仍区分不同候选。
- *
- * 多租户隔离：dashboard 给每用户发各自 JWT（现发 CONSOLE_SUBJECT 常量）后，askSub 即按
- * 用户隔离，promote 审批不再跨用户越权——askCache 侧无需再改（#91）。
+ * owner 由 ``defaultGetAuthSub`` 独立提取。缺少稳定 thread/session 时，
+ * costful ask 必须 fail closed，不能回退到 owner 或全局作用域。
  */
 export function defaultGetSessionId(ctx: unknown): string | undefined {
   if (!ctx || typeof ctx !== "object") return undefined;
-  const c = ctx as Record<string, unknown>;
-
-  // 最高优先级：mastra server.middleware 注入的已认证主体（#91 多租户 askCache scope）。
-  // requestContext 是 Mastra RequestContext（Map → .get）；也兼容自构造的普通对象。
-  const rcForAuth = c.requestContext;
-  if (rcForAuth && typeof rcForAuth === "object") {
-    const getter = (rcForAuth as { get?: (k: string) => unknown }).get;
-    const authSub =
-      typeof getter === "function"
-        ? pickString(getter.call(rcForAuth, AUTH_SUB_KEY))
-        : pickString((rcForAuth as Record<string, unknown>)[AUTH_SUB_KEY]);
-    if (authSub) return authSub;
-  }
-
-  // Mastra 1.10：threadId / resourceId 在 ctx.agent 下（thread-level 稳定）
-  const agent = c.agent;
+  const context = ctx as Record<string, unknown>;
+  const agent = context.agent;
   if (agent && typeof agent === "object") {
-    const a = agent as Record<string, unknown>;
-    const tid = pickString(a.threadId);
-    if (tid) return tid;
-    const rid = pickString(a.resourceId);
-    if (rid) return rid;
+    const threadId = pickString((agent as Record<string, unknown>).threadId);
+    if (threadId) return threadId;
   }
-
-  // 老 Mastra / 自构造 ctx fallback
-  const threadId = pickString(c.threadId);
+  const threadId = pickString(context.threadId);
   if (threadId) return threadId;
-  const rc = c.requestContext;
-  if (rc && typeof rc === "object") {
-    const sid = pickString((rc as Record<string, unknown>).sessionId);
-    if (sid) return sid;
+  const requestContext = context.requestContext;
+  if (requestContext && typeof requestContext === "object") {
+    const sessionId = pickString((requestContext as Record<string, unknown>).sessionId);
+    if (sessionId) return sessionId;
+    const getter = (requestContext as { get?: (key: string) => unknown }).get;
+    if (typeof getter === "function") {
+      const mappedSessionId = pickString(getter.call(requestContext, "sessionId"));
+      if (mappedSessionId) return mappedSessionId;
+    }
   }
-  const sid = pickString(c.sessionId);
-  if (sid) return sid;
-
-  // 没有任何**会话级稳定** id（threadId / resourceId / sessionId）。
-  //
-  // **故意不回退到 ctx.runId**：runId 每个 user-turn 一个新值，用它当 askCache key
-  // → 用户每次「同意」都是新 turn = 新 key → mark / consume 永远撞不上 → 审批死循环
-  // （ADR-0018 ask-path）。返回 undefined 让 askCache 落**稳定**的 "__global__" key，
-  // 跨 turn 能命中（approvalKey 已含 candidateId 区分不同候选，60s TTL 兜底）。
-  //
-  // 已知局限：AG-UI / Mastra 当前版本不把 memory.thread / resource 暴露进 tool
-  // ToolExecutionContext（ctx.agent.threadId / resourceId 槽位在、值恒空，实测）。
-  // 单租户 dev 下 "__global__" 够用；接真实多租户前需让 threadId 真正进 ctx
-  // （改 dashboard ↔ mastra 转发或升级 @ag-ui/mastra），届时上面的 threadId 分支即生效。
-  if (pickString(c.runId) && !_warnedRunIdFallback) {
-    _warnedRunIdFallback = true;
-    console.warn(
-      "[with-hooks] defaultGetSessionId: no stable thread/resource id in ctx; " +
-        "intentionally NOT using per-turn ctx.runId (would break cross-turn ask-cache). " +
-        "Using stable '__global__' ask-cache scope (single-tenant safe). " +
-        "Populate ctx.agent.threadId/resourceId for multi-tenant isolation.",
-    );
-  }
-  return undefined;
+  return pickString(context.sessionId);
 }
 
-/**
- * 抽取 Mastra 每个 user turn 唯一的 ``runId``，仅用于证明审批发生在后续消息。
- * 它不能替代稳定 sessionId；缺失时 ask cache 必须 fail closed。
- */
+/** Extracts the authenticated approval owner injected by identityMiddleware. */
+export function defaultGetAuthSub(ctx: unknown): string | undefined {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  const requestContext = (ctx as Record<string, unknown>).requestContext;
+  if (!requestContext || typeof requestContext !== "object") return undefined;
+  const getter = (requestContext as { get?: (key: string) => unknown }).get;
+  return typeof getter === "function"
+    ? pickString(getter.call(requestContext, AUTH_SUB_KEY))
+    : pickString((requestContext as Record<string, unknown>)[AUTH_SUB_KEY]);
+}
+
+/** Extracts the per-turn run ID for diagnostics; approval never uses it. */
 export function defaultGetTurnId(ctx: unknown): string | undefined {
   if (!ctx || typeof ctx !== "object") return undefined;
   return pickString((ctx as Record<string, unknown>).runId);
@@ -171,10 +118,10 @@ export type WithHooksOptions = {
   runner: HookRunner;
   /** 可选权限解析器（task #3 接入）；缺省视为 allow。 */
   permissionResolver?: PermissionResolver;
-  /** 可选 sessionId 提供器；从 tool ctx 中取（依赖 Mastra runtime context） */
+  /** 可选 sessionId 提供器；必须返回稳定 thread/session ID。 */
   getSessionId?: (toolCtx: unknown) => string | undefined;
-  /** 可选 user-turn ID 提供器；缺省读取 Mastra ``ctx.runId``。 */
-  getTurnId?: (toolCtx: unknown) => string | undefined;
+  /** 可选审批 owner 提供器；缺省读取已验签 Bearer 的 sub。 */
+  getAuthSub?: (toolCtx: unknown) => string | undefined;
   /**
    * 可选挂起池（D-9.1b / ADR-0018）。permissionResolver=ask 时把请求挂进去，供
    * CLI / Web 入口（GET /permissions/pending）查看。缺省用模块级单例（同
@@ -183,12 +130,6 @@ export type WithHooksOptions = {
   pendingApprovals?: PendingApprovalsStore;
   /** ask 路径 store 超时毫秒数；缺省 30_000（30 秒）。0 / 负数视作默认。 */
   askTimeoutMs?: number;
-  /**
-   * 可选 session-scoped 短期通行池（D-9.1b 修订）。让"第一次 ask → 用户在 chat
-   * 说允许 → agent 重调同 tool 同 input → 放行"在不引入 token 的前提下走通。
-   * 缺省用模块级单例；测试可注入 fresh 实例。
-   */
-  askCache?: AskApprovalCache;
 };
 
 /**
@@ -205,7 +146,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
   }
 
   const getSessionId = opts.getSessionId ?? defaultGetSessionId;
-  const getTurnId = opts.getTurnId ?? defaultGetTurnId;
+  const getAuthSub = opts.getAuthSub ?? defaultGetAuthSub;
 
   const wrapped: GenericTool = {
     ...tool,
@@ -216,7 +157,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
       const toolName = tool.id;
       try {
         const sessionId = getSessionId(ctx);
-        const turnId = getTurnId(ctx);
+        const authSub = getAuthSub(ctx);
 
         // 1. PreToolUse
         const pre = await opts.runner.run("PreToolUse", {
@@ -251,62 +192,9 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
         }
 
         if (permDecision === "ask") {
-          // D-9.1b 修订 · session-scoped 短期通行池：
-          //
-          // 第一次 ask：cache 没命中 → mark + 返 requiresApproval；agent 在 chat
-          //   里向用户说明 + 等用户口头同意。
-          // 第二次 ask（同 sessionId + 同 toolName + 同审批身份，且来自后续 user turn）：
-          //   cache 命中 → 消费 + 继续走 execute。同一 turn 内自重试始终拒绝。
-          //
-          // sessionId 负责用户/会话隔离，turnId（Mastra ctx.runId）只负责证明期间确实
-          // 出现过新的用户消息。缺少 turnId 时 fail closed，不能靠模型纪律代替审批。
-          //
-          // 同时把请求挂进 PendingApprovalsStore（fire-and-forget）—— GET
-          // /permissions/pending 仍能列出来，为未来 CLI / Web 入口保留。
-          const cache = opts.askCache ?? defaultAskCache;
           const store = opts.pendingApprovals ?? defaultPendingApprovals;
-          const timeoutMs =
-            opts.askTimeoutMs && opts.askTimeoutMs > 0 ? opts.askTimeoutMs : undefined;
-
-          // 审批匹配只用"身份字段"投影，不用完整 input：promote 等 tool 的 input 里
-          // 带 LLM 自由生成的 reason，重调时措辞会变 → 用完整 input 当 key 会 cache
-          // miss → 反复弹确认。投影后只比对 candidateId 这类身份字段。
-          // store / execute 仍用完整 effectiveInput（审计 & 落库要 reason）。
-          // 详见 permissions/approval-identity.ts。
-          const approvalKey = projectApprovalInput(toolName, effectiveInput);
-
-          const consumeResult = cache.consume(
-            sessionId,
-            toolName,
-            approvalKey,
-            turnId,
-            (msg) =>
-              // stderr 走 mastra dev log，方便 user 实时看 mismatch 原因
-              console.warn(`[askCache] ${msg}`),
-          );
-
-          if (consumeResult === "consumed") {
-            // 后续 user turn 命中 cache → 一次性消费 + 放行（继续往下走 execute）
-          } else {
-            if (consumeResult === "miss") {
-              // 首次 ask：mark cache + 挂 store（CLI 入口可见）。
-              cache.mark(sessionId, toolName, approvalKey, turnId);
-              void store.request({
-                toolName,
-                toolInput: effectiveInput,
-                sessionId,
-                authSub: sessionId,
-                timeoutMs,
-              });
-            }
-            const turnBoundaryMessage =
-              consumeResult === "same_turn"
-                ? `This is a retry inside the same user turn. Do NOT call the tool again now. ` +
-                  `Stop and wait for the user's next chat message; only that new turn can confirm it.\n\n`
-                : consumeResult === "missing_turn_id"
-                  ? `A safe user-turn boundary could not be verified. Do NOT retry or execute this ` +
-                    `action; tell the user approval could not be completed safely.\n\n`
-                  : "";
+          const approvalInput = projectApprovalInput(toolName, effectiveInput);
+          if (!authSub || !sessionId) {
             return {
               isError: true,
               deniedBy: "permission-ask",
@@ -314,25 +202,41 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
               toolName,
               toolInput: effectiveInput,
               message:
-                `APPROVAL_REQUIRED: tool "${toolName}" needs explicit user consent.\n\n` +
-                turnBoundaryMessage +
-                `**There is NO UI button, NO popup, NO admin page.** The user can ONLY ` +
-                `reply with chat text. Never tell them to "click 允许" or "在界面上" / ` +
-                `"open the admin page" — they can't.\n\n` +
-                `Steps (reply in the user's language; match their latest message — never ` +
-                `hardcode Chinese or English):\n` +
-                `  1. Translate the tool id into a plain user-meaningful phrase ` +
-                `(e.g. paper.promote_candidate → "add this strategy to the live pool" / ` +
-                `"把这条策略加入正式策略池"). Show the *why* + key inputs (use human ` +
-                `labels alongside IDs). Ask the user to confirm in chat.\n` +
-                `  2. End the current response and wait. Only after the user sends a NEW chat ` +
-                `message with explicit consent ("ok / yes / allow / 允许 / 同意 / 好 / 上"), ` +
-                `call this tool again with the **same approval-identity inputs** (no token). ` +
-                `A retry in the current turn is always rejected.\n` +
-                `  3. If they refuse / hesitate / give ambiguous answer → tell them ` +
-                `you've cancelled, do NOT retry.\n` +
-                `  4. If a later-turn retry returns this same APPROVAL_REQUIRED, preserve all ` +
-                `operation-defining args and ask again; do not invent a popup or timeout.`,
+                `APPROVAL_UNAVAILABLE: tool "${toolName}" cannot run because a verified owner ` +
+                `and stable thread/session ID are required. Do not retry or infer consent from chat text. ` +
+                `Explain this in the user's latest language.`,
+            };
+          }
+
+          if (
+            !store.consumeApproved({
+              authSub,
+              sessionId,
+              toolName,
+              approvalInput,
+            })
+          ) {
+            const pending = store.request({
+              authSub,
+              sessionId,
+              toolName,
+              toolInput: effectiveInput,
+              approvalInput,
+              timeoutMs:
+                opts.askTimeoutMs && opts.askTimeoutMs > 0 ? opts.askTimeoutMs : undefined,
+            });
+            return {
+              isError: true,
+              deniedBy: "permission-ask",
+              requiresApproval: true,
+              requestId: pending.requestId,
+              toolName,
+              toolInput: effectiveInput,
+              message:
+                `APPROVAL_REQUIRED: tool "${toolName}" needs an explicit decision through the ` +
+                `trusted approval UI/API. Chat text, a new turn, or model output cannot approve it. ` +
+                `Show the purpose and key inputs, then wait. Reply in the user's latest language. ` +
+                `If denied or expired, cancel the action and do not retry automatically.`,
             };
           }
         }
