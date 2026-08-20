@@ -27,7 +27,15 @@ class FakeDataClient:
         self.calls.append(("backfill", kwargs))
         if self.backfill_error:
             raise self.backfill_error
-        return {"count": len(self.bars), "source": "test"}
+        return {
+            "venue": kwargs["venue"],
+            "symbol": kwargs["symbol"],
+            "timeframe": kwargs["timeframe"],
+            "bars_fetched": len(self.bars),
+            "bars_inserted": len(self.bars),
+            "from_ts": kwargs["from_ts"],
+            "to_ts": kwargs["to_ts"],
+        }
 
     async def get_bars(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.calls.append(("get", kwargs))
@@ -68,6 +76,10 @@ async def test_load_backfills_then_reads_without_fresh_fallback() -> None:
     assert client.calls[1][1]["limit"] == 10_001
     assert dataset.manifest.bar_count == 3
     assert dataset.manifest.latest_bar_ts == _AS_OF - timedelta(hours=1)
+    assert dataset.manifest.cutoff_bar_ts == dataset.manifest.latest_bar_ts
+    assert dataset.manifest.data_epoch == int(dataset.manifest.latest_bar_ts.timestamp() * 1000)
+    assert dataset.manifest.backfill.bars_fetched == 3
+    assert dataset.manifest.backfill.venue == "binance"
     assert len(dataset.manifest.content_sha256) == 64
 
 
@@ -119,3 +131,48 @@ async def test_bad_bars_fail_closed(mutation: str) -> None:
             from_ts=_AS_OF - timedelta(days=1),
             as_of=_AS_OF,
         )
+
+
+@pytest.mark.asyncio
+async def test_middle_gap_fails_even_when_tail_is_fresh() -> None:
+    bars = _hourly_bars(4)
+    del bars[1]
+    with pytest.raises(ValidationError) as error:
+        await FrozenBarsLoader(FakeDataClient(bars)).load(  # type: ignore[arg-type]
+            venue="binance", symbol="BTCUSDT", timeframe="1h",
+            from_ts=_AS_OF - timedelta(days=1), as_of=_AS_OF)
+    assert error.value.code == "EVOLUTION_DATA_GAP_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_equity_holiday_is_not_reported_as_gap() -> None:
+    as_of = datetime(2026, 7, 6, 21, tzinfo=UTC)
+    bars = [
+        {
+            "venue": "yfinance", "symbol": "AAPL", "timeframe": "1d",
+            "ts": datetime(2026, 7, day, 4, tzinfo=UTC).isoformat(),
+            "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5,
+            "volume": 10.0,
+        }
+        for day in (1, 2, 6)
+    ]
+    dataset = await FrozenBarsLoader(FakeDataClient(bars)).load(  # type: ignore[arg-type]
+        venue="yfinance", symbol="AAPL", timeframe="1d",
+        from_ts=datetime(2026, 7, 1, tzinfo=UTC), as_of=as_of)
+    assert dataset.manifest.bar_count == 3
+
+
+@pytest.mark.asyncio
+async def test_loader_rejects_naive_and_future_as_of() -> None:
+    loader = FrozenBarsLoader(FakeDataClient(_hourly_bars()))  # type: ignore[arg-type]
+    with pytest.raises(ValidationError) as naive:
+        await loader.load(venue="binance", symbol="BTCUSDT", timeframe="1h",
+                          from_ts=_AS_OF - timedelta(days=1),
+                          as_of=_AS_OF.replace(tzinfo=None))
+    assert naive.value.code == "EVOLUTION_DATETIME_NAIVE"
+
+    future = datetime.now(UTC) + timedelta(minutes=1)
+    with pytest.raises(ValidationError) as ahead:
+        await loader.load(venue="binance", symbol="BTCUSDT", timeframe="1h",
+                          from_ts=_AS_OF, as_of=future)
+    assert ahead.value.code == "EVOLUTION_AS_OF_IN_FUTURE"

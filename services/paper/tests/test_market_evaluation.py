@@ -51,6 +51,16 @@ def test_intraday_equity_uses_session_minutes() -> None:
     assert 900 <= context.annualization_periods <= 1100
 
 
+def test_intraday_annualization_counts_short_tail_grid_bars() -> None:
+    context = build_market_evaluation_context(
+        venue="yfinance",
+        symbol="AAPL",
+        timeframe="1h",
+        as_of=_AS_OF,
+    )
+    assert 1740 <= context.annualization_periods <= 1770
+
+
 def test_timeframe_helpers_are_explicit() -> None:
     assert canonical_timeframe("1mo") == "1M"
     assert fixed_timeframe_seconds("1wk") == 7 * 86_400

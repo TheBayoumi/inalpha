@@ -1,11 +1,14 @@
 """Evolver API 请求与响应模型。"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+
+from ..data.datetime_policy import MAX_AS_OF_CLOCK_SKEW
+from ..data.manifest import DatasetManifest
 
 
 class EvolutionConfig(BaseModel):
@@ -18,8 +21,20 @@ class EvolutionConfig(BaseModel):
     fee_rate: float = Field(default=0.001, ge=0, le=0.1)
     validation_split: float = Field(default=0.3, ge=0, le=0.5)
 
+    @field_validator("from_ts", "as_of")
+    @classmethod
+    def normalize_datetimes(cls, value: datetime, info: ValidationInfo) -> datetime:
+        """拒绝无时区 cutoff，其余时间统一为 UTC。"""
+        if value.tzinfo is None:
+            if info.field_name == "as_of":
+                raise ValueError("as_of must be timezone-aware")
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
     @model_validator(mode="after")
     def validate_window(self) -> EvolutionConfig:
+        if self.as_of > datetime.now(UTC) + MAX_AS_OF_CLOCK_SKEW:
+            raise ValueError("as_of exceeds trusted current time")
         if self.from_ts >= self.as_of:
             raise ValueError("from_ts must be earlier than as_of")
         if self.as_of - self.from_ts > timedelta(days=3650):
@@ -52,6 +67,7 @@ class CandidateResponse(BaseModel):
     error_code: str | None = None
     error_message: str | None = None
     overfitting_risk: str = "high"
+    data_epoch: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -67,7 +83,7 @@ class RunStatusResponse(BaseModel):
     queued_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    dataset_manifest: dict[str, Any] | None = None
+    dataset_manifest: DatasetManifest | None = None
     seed_report_snapshot: dict[str, Any] | None = None
     baseline_snapshot: dict[str, Any] | None = None
     failure_code: str | None = None

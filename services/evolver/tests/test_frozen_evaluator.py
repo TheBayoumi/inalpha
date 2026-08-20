@@ -41,12 +41,22 @@ def _dataset() -> FrozenDataset:
         effective_from=start,
         effective_to=start + timedelta(hours=39),
         latest_bar_ts=start + timedelta(hours=39),
+        cutoff_bar_ts=start + timedelta(hours=39),
+        data_epoch=int((start + timedelta(hours=39)).timestamp() * 1000),
         bar_count=40,
         freshness_lag_seconds=0,
         annualization_periods=8760,
         calendar_code=None,
         content_sha256="a" * 64,
-        backfill={"count": 40},
+        backfill={
+            "venue": "binance",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "bars_fetched": 40,
+            "bars_inserted": 40,
+            "from_ts": start,
+            "to_ts": start + timedelta(hours=41),
+        },
     )
     return FrozenDataset(bars=bars, manifest=manifest)
 

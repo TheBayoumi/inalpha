@@ -22,10 +22,18 @@ class FakeDataClient:
         self.bars = bars
         self.error = error
 
-    async def backfill_bars(self, **_kwargs: Any) -> dict[str, Any]:
+    async def backfill_bars(self, **kwargs: Any) -> dict[str, Any]:
         if self.error:
             raise self.error
-        return {"count": len(self.bars)}
+        return {
+            "venue": kwargs["venue"],
+            "symbol": kwargs["symbol"],
+            "timeframe": kwargs["timeframe"],
+            "bars_fetched": len(self.bars),
+            "bars_inserted": len(self.bars),
+            "from_ts": kwargs["from_ts"],
+            "to_ts": kwargs["to_ts"],
+        }
 
     async def get_bars(self, **_kwargs: Any) -> list[dict[str, Any]]:
         return self.bars
