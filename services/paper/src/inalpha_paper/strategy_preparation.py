@@ -1,4 +1,5 @@
 """临时策略源码的审计、加载与契约准备。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,14 +23,20 @@ class PreparedStrategy:
     class_name: str
 
 
-def prepare_strategy_source(source_code: str) -> PreparedStrategy:
-    """执行源码审计、受限加载和策略契约校验。"""
+def audit_strategy_source(source_code: str) -> str:
+    """只执行不会加载或运行候选代码的 AST 静态审计。"""
     audit = audit_strategy_code(source_code)
     if not audit.ok:
         raise ValidationError(
             f"strategy source failed audit: {audit.reason()}",
             code="CANDIDATE_REAUDIT_FAILED",
         )
+    return source_code
+
+
+def prepare_strategy_source(source_code: str) -> PreparedStrategy:
+    """执行源码审计、受限加载和策略契约校验。"""
+    audit_strategy_source(source_code)
     try:
         strategy_cls = load_strategy_class(source_code)
     except DynamicLoadError as exc:
@@ -47,4 +54,4 @@ def prepare_strategy_source(source_code: str) -> PreparedStrategy:
     return PreparedStrategy(source_code=source_code, class_name=strategy_cls.__name__)
 
 
-__all__ = ["PreparedStrategy", "prepare_strategy_source"]
+__all__ = ["PreparedStrategy", "audit_strategy_source", "prepare_strategy_source"]

@@ -1,4 +1,5 @@
 """一次性回测子进程执行器测试。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,10 +7,21 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from inalpha_paper.evaluation_executor import KillableEngineRunner
+from inalpha_paper.evaluation_executor import KillableEngineRunner, WorkerExecutionError
 from inalpha_paper.kernel.identifiers import InstrumentId
 from inalpha_paper.model.data import Bar
-from inalpha_paper.strategy_evaluation import evaluate_buy_and_hold
+from inalpha_paper.strategy_evaluation import evaluate_buy_and_hold, evaluate_strategy_source
+
+_BAD_CONTRACT_SOURCE = """
+class TestStrategy(Strategy):
+    pass
+"""
+
+_HANGING_CLASS_SOURCE = """
+class TestStrategy(Strategy):
+    while True:
+        pass
+"""
 
 
 def _bars() -> list[Bar]:
@@ -64,6 +76,38 @@ async def test_killable_runner_enforces_wall_timeout() -> None:
 
     with pytest.raises(TimeoutError):
         await evaluate_buy_and_hold(
+            bars=bars,
+            instrument_id=bars[0].instrument_id,
+            timeframe="1h",
+            run_engine=runner,
+        )
+
+
+@pytest.mark.asyncio
+async def test_contract_check_runs_inside_worker() -> None:
+    bars = _bars()
+    runner = KillableEngineRunner(timeout_s=5.0, mem_gb=2.0)
+
+    with pytest.raises(WorkerExecutionError) as error:
+        await evaluate_strategy_source(
+            source_code=_BAD_CONTRACT_SOURCE,
+            bars=bars,
+            instrument_id=bars[0].instrument_id,
+            timeframe="1h",
+            run_engine=runner,
+        )
+
+    assert error.value.code == "CANDIDATE_CONTRACT_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_class_body_hang_is_killed_by_worker_timeout() -> None:
+    bars = _bars()
+    runner = KillableEngineRunner(timeout_s=0.2, mem_gb=2.0)
+
+    with pytest.raises(TimeoutError):
+        await evaluate_strategy_source(
+            source_code=_HANGING_CLASS_SOURCE,
             bars=bars,
             instrument_id=bars[0].instrument_id,
             timeframe="1h",

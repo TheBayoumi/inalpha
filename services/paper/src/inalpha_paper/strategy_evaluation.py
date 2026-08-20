@@ -10,7 +10,7 @@ from .engine.metrics import periods_per_year
 from .evaluation_metrics import fitness_from_report, validation_from_report
 from .evaluation_snapshot import EvaluationSnapshot
 from .strategies import BASELINE_BUY_AND_HOLD
-from .strategy_preparation import prepare_strategy_source
+from .strategy_preparation import audit_strategy_source
 
 if TYPE_CHECKING:
     from .engine.report import BacktestReport
@@ -44,14 +44,14 @@ async def evaluate_strategy_source(
 ) -> SourceEvaluation:
     """审计临时源码并在调用方提供的隔离执行器中评估。"""
     _validate_bars(bars)
-    prepared = prepare_strategy_source(source_code)
+    audited_source = audit_strategy_source(source_code)
     periods = annualization_periods or float(periods_per_year(timeframe))
     report = await run_engine(
         bars=bars,
         instrument_id=instrument_id,
         timeframe=timeframe,
         strategy_id=None,
-        candidate_code=prepared.source_code,
+        candidate_code=audited_source,
         params=params or {},
         initial_cash=initial_cash,
         fee_rate=fee_rate,

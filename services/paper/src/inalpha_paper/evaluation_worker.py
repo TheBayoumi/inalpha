@@ -1,4 +1,5 @@
 """可 pickle 的回测 worker。"""
+
 from __future__ import annotations
 
 import inspect
@@ -8,7 +9,13 @@ from inalpha_shared.errors import ValidationError
 
 from .engine.backtest import BacktestEngine
 from .strategies import get_strategy_class
-from .strategy_authoring import load_strategy_class, verify_strategy_contract
+from .strategy_authoring import (
+    ContractError,
+    DynamicLoadError,
+    audit_strategy_code,
+    load_strategy_class,
+    verify_strategy_contract,
+)
 
 if TYPE_CHECKING:
     from .engine.report import BacktestReport
@@ -51,8 +58,26 @@ def run_engine_worker(
         annualization_periods=annualization_periods,
     )
     if candidate_code is not None:
-        strategy_cls = load_strategy_class(candidate_code)
-        verify_strategy_contract(strategy_cls)
+        audit = audit_strategy_code(candidate_code)
+        if not audit.ok:
+            raise ValidationError(
+                f"strategy source failed audit: {audit.reason()}",
+                code="CANDIDATE_REAUDIT_FAILED",
+            )
+        try:
+            strategy_cls = load_strategy_class(candidate_code)
+        except DynamicLoadError as exc:
+            raise ValidationError(
+                f"strategy source failed to load: {exc}",
+                code="CANDIDATE_LOAD_FAILED",
+            ) from exc
+        try:
+            verify_strategy_contract(strategy_cls)
+        except ContractError as exc:
+            raise ValidationError(
+                f"strategy source failed contract check: {exc}",
+                code="CANDIDATE_CONTRACT_FAILED",
+            ) from exc
         strategy_name = f"{strategy_cls.__name__}-{instrument_id.symbol}"
     else:
         if strategy_id is None:
