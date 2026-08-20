@@ -159,3 +159,55 @@ jobs:
       - name: Mypy (best-effort, allow failure)
         working-directory: services/${{ matrix.service }}
         run: uv run mypy . || true
+
+  python-e1-tests:
+    name: E1 · ${{ matrix.service }} pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [paper, evolver]
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.27.2-pg17
+        env:
+          POSTGRES_USER: quant
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: inalpha_migration_ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U quant -d inalpha_migration_ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://quant:devpass@localhost:5432/inalpha_test
+      INALPHA_MIGRATION_TEST_DATABASE_URL: postgresql+psycopg://quant:devpass@localhost:5432/inalpha_migration_ci_test
+      JWT_SECRET: ci-test-secret-do-not-use
+      DATA_SERVICE_URL: http://data-mock.test
+      PAPER_POOL_DISABLED: "1"
+      INALPHA_LIVE_RUNNER_RESUME_ON_STARTUP: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Sync dependencies
+        working-directory: services/${{ matrix.service }}
+        run: uv sync --frozen
+      - name: Apply schema for Evolver tests
+        if: matrix.service == 'evolver'
+        working-directory: services/evolver
+        run: uv run alembic -c ../../infra/migrations/alembic.ini upgrade head
+      - name: Run service tests
+        working-directory: services/${{ matrix.service }}
+        run: uv run pytest -q tests
+      - name: Verify migration round trip
+        if: matrix.service == 'evolver'
+        working-directory: services/evolver
+        run: uv run pytest -q ../../infra/migrations/tests/test_migration_0038.py
