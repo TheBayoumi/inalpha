@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -60,12 +61,12 @@ async def evaluate_strategy_source(
         funding_rate=funding_rate,
         annualization_periods=int(periods),
     )
-    validation = (
-        validation_from_report(report, split=validation_split, bars_per_year=periods)
-        if validation_split > 0
-        else None
+    validation, fitness = await asyncio.to_thread(
+        _compute_metrics,
+        report,
+        validation_split,
+        periods,
     )
-    fitness = fitness_from_report(report, bars_per_year=periods)
     return SourceEvaluation(
         report=report,
         snapshot=EvaluationSnapshot.from_report(
@@ -118,6 +119,20 @@ async def evaluate_buy_and_hold(
             validation=None,
         ),
     )
+
+
+def _compute_metrics(
+    report: BacktestReport,
+    validation_split: float,
+    periods: float,
+) -> tuple[Any, float]:
+    """在线程中计算 bootstrap/fitness，避免阻塞 async API。"""
+    validation = (
+        validation_from_report(report, split=validation_split, bars_per_year=periods)
+        if validation_split > 0
+        else None
+    )
+    return validation, fitness_from_report(report, bars_per_year=periods)
 
 
 def _validate_bars(bars: list[Bar]) -> None:

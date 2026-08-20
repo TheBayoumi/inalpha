@@ -1,4 +1,5 @@
 """run 列表、claim 与重启收口 SQL。"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -47,7 +48,7 @@ async def claim_next(conn: AsyncConnection) -> dict[str, Any] | None:
             f"""WITH picked AS(SELECT run_id FROM strategy_evo_runs WHERE status='queued'
 ORDER BY queued_at FOR UPDATE SKIP LOCKED LIMIT 1)UPDATE strategy_evo_runs r SET
 status='running',active_stage='loading_data',started_at=%s,updated_at=%s FROM picked
-WHERE r.run_id=picked.run_id RETURNING {','.join(f'r.{name.strip()}' for name in _COLUMNS.split(','))}""",
+WHERE r.run_id=picked.run_id RETURNING {",".join(f"r.{name.strip()}" for name in _COLUMNS.split(","))}""",
             (now, now),
         )
         row = await cur.fetchone()
@@ -85,6 +86,13 @@ async def reconcile_interrupted(conn: AsyncConnection) -> int:
     """服务重启时保留 queued，收口可能已计费的 active run。"""
     now = datetime.now(UTC)
     async with conn.cursor() as cur:
+        await cur.execute(
+            """UPDATE strategy_evo_candidates c SET stage='completed',outcome='cancelled',
+error_code='EVOLUTION_SERVICE_RESTARTED',error_message='service restarted during execution',
+updated_at=%s FROM strategy_evo_runs r WHERE c.run_id=r.run_id AND c.outcome='pending'
+AND r.status=ANY(%s)""",
+            (now, ["running", "cancelling"]),
+        )
         await cur.execute(
             """UPDATE strategy_evo_runs SET status='aborted',active_stage='aborted',
 finished_at=%s,updated_at=%s,failure_code='EVOLUTION_SERVICE_RESTARTED',

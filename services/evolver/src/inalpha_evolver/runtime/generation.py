@@ -1,4 +1,5 @@
 """单代演化 run 的顺序调度。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +23,7 @@ async def execute_generation(
     evaluator: FrozenDatasetEvaluator,
 ) -> None:
     source = run["seed_source_snapshot"]
-    seed_result, baseline_snapshot = await asyncio.gather(
-        evaluator.evaluate(source),
-        evaluator.evaluate_baseline(),
-    )
+    seed_result, baseline_snapshot = await _evaluate_seed_and_baseline(evaluator, source)
     async with get_conn() as conn:
         current = await runs.transition(
             conn,
@@ -72,6 +70,26 @@ async def execute_generation(
         )
     if completed is None:
         raise asyncio.CancelledError
+
+
+async def _evaluate_seed_and_baseline(
+    evaluator: FrozenDatasetEvaluator,
+    source: str,
+) -> tuple[Any, dict[str, Any]]:
+    """任一评估失败时取消并等待 sibling，避免越过 run 并发预算。"""
+    tasks = [
+        asyncio.create_task(evaluator.evaluate(source)),
+        asyncio.create_task(evaluator.evaluate_baseline()),
+    ]
+    try:
+        seed_result, baseline = await asyncio.gather(*tasks)
+        return seed_result, baseline
+    except BaseException:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def _checkpoint(run_id: UUID) -> None:

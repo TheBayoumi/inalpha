@@ -36,6 +36,14 @@ class EvolverSettings(BaseSettings):
         description="单个回测任务的超时秒数（传参给 subprocess_runner）。",
     )
 
+    evolver_run_timeout_s: int = Field(
+        default=1200,
+        alias="EVOLVER_RUN_TIMEOUT_S",
+        ge=60,
+        le=14400,
+        description="整个单代 run 的总墙钟期限。",
+    )
+
     evolver_job_mem_gb: int = Field(
         default=2,
         alias="EVOLVER_JOB_MEM_GB",

@@ -44,6 +44,24 @@ def _child_entry(
         connection.close()
 
 
+def _cleanup_process(process: multiprocessing.Process) -> None:
+    """在线程中完成可能阻塞的 terminate/join/kill/close。"""
+    try:
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=1.0)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1.0)
+    except (AssertionError, ValueError):
+        pass
+    finally:
+        try:
+            process.close()
+        except ValueError:
+            pass
+
+
 class KillableEngineRunner:
     """每次评估启动一个 spawn 子进程，取消或超时时强制终止。"""
 
@@ -59,11 +77,15 @@ class KillableEngineRunner:
             target=_child_entry,
             args=(send, kwargs, self._cpu_limit_s, self._mem_bytes),
         )
-        process.start()
-        send.close()
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._timeout_s
+        started = False
         try:
+            await asyncio.wait_for(
+                asyncio.to_thread(process.start), timeout=max(0.001, deadline - loop.time())
+            )
+            started = True
+            send.close()
             while not receive.poll():
                 if not process.is_alive():
                     raise WorkerExecutionError(
@@ -74,7 +96,10 @@ class KillableEngineRunner:
                 if loop.time() >= deadline:
                     raise TimeoutError(f"backtest worker exceeded {self._timeout_s:.1f}s")
                 await asyncio.sleep(0.01)
-            kind, payload = receive.recv()
+            kind, payload = await asyncio.wait_for(
+                asyncio.to_thread(receive.recv),
+                timeout=max(0.001, deadline - loop.time()),
+            )
             if kind == "ok":
                 return payload
             if kind == "error":
@@ -90,13 +115,9 @@ class KillableEngineRunner:
             )
         finally:
             receive.close()
-            if process.is_alive():
-                process.terminate()
-            process.join(timeout=1.0)
-            if process.is_alive():
-                process.kill()
-                process.join(timeout=1.0)
-            process.close()
+            if not started:
+                send.close()
+            await asyncio.shield(asyncio.to_thread(_cleanup_process, process))
 
 
 __all__ = ["KillableEngineRunner", "WorkerExecutionError"]

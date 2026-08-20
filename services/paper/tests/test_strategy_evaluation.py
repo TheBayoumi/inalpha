@@ -1,7 +1,11 @@
 """临时源码评估成功路径。"""
+
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -89,3 +93,38 @@ async def test_source_evaluation_returns_json_snapshot() -> None:
     assert result.snapshot.validation is not None
     assert "equity_curve" not in result.snapshot.model_dump()
     json.dumps(result.snapshot.model_dump(mode="json"))
+
+
+@pytest.mark.asyncio
+async def test_validation_metrics_run_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bars = _bars()
+    main_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    async def run_engine(**kwargs: Any) -> BacktestReport:
+        return _report(kwargs["bars"])
+
+    def slow_validation(*_args: Any, **_kwargs: Any) -> None:
+        worker_threads.append(threading.get_ident())
+        time.sleep(0.1)
+
+    monkeypatch.setattr("inalpha_paper.strategy_evaluation.validation_from_report", slow_validation)
+    task = asyncio.create_task(
+        evaluate_strategy_source(
+            source_code=_SOURCE,
+            bars=bars,
+            instrument_id=bars[0].instrument_id,
+            timeframe="1h",
+            run_engine=run_engine,
+        )
+    )
+    ticks = 0
+    while not task.done():
+        ticks += 1
+        await asyncio.sleep(0.01)
+    await task
+
+    assert ticks > 2
+    assert worker_threads and worker_threads[0] != main_thread

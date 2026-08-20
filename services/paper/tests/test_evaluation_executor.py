@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 
 import pytest
 
@@ -59,13 +60,16 @@ async def test_killable_runner_keeps_event_loop_responsive() -> None:
             run_engine=runner,
         )
     )
-    ticks = 0
+    loop = asyncio.get_running_loop()
+    tick_times = [loop.time()]
     while not task.done():
-        ticks += 1
         await asyncio.sleep(0.01)
+        tick_times.append(loop.time())
     result = await task
+    gaps = [right - left for left, right in pairwise(tick_times)]
 
-    assert ticks > 0
+    assert gaps
+    assert max(gaps) < 0.5
     assert result.snapshot.num_bars == len(bars)
 
 

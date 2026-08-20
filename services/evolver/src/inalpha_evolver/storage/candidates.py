@@ -1,4 +1,5 @@
 """strategy_evo_candidates 的 slot 持久化。"""
+
 from __future__ import annotations
 
 import json
@@ -95,6 +96,23 @@ USING(run_id)WHERE c.candidate_id=%s AND r.owner_account_id=%s""",
         )
         row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def close_pending(
+    conn: AsyncConnection,
+    run_id: UUID,
+    *,
+    error_code: str,
+    error_message: str,
+) -> int:
+    """把 run 终态遗留的 pending slot 原子收口为 cancelled。"""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """UPDATE strategy_evo_candidates SET stage='completed',outcome='cancelled',
+error_code=%s,error_message=%s,updated_at=%s WHERE run_id=%s AND outcome='pending'""",
+            (error_code, error_message[:1000], datetime.now(UTC), run_id),
+        )
+        return cur.rowcount
 
 
 async def summarize(conn: AsyncConnection, run_id: UUID) -> dict[str, int | float]:

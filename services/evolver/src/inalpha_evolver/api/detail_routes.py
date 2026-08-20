@@ -1,4 +1,5 @@
 """Evolver run/candidate 查询与取消端点。"""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -51,10 +52,12 @@ async def abort_run(
     user: Annotated[User, Depends(get_current_user)],
 ) -> RunStatusResponse:
     owner = account_id_from_user(user)
-    row = await run_queries.abort_owned(db, run_id, owner)
+    transitioned = await run_queries.abort_owned(db, run_id, owner)
+    row = transitioned
     if row is None:
         row = await runs.get_run(db, run_id, owner)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-    await request.app.state.evolution_manager.abort(run_id)
+    if transitioned is not None and transitioned["status"] == "cancelling":
+        await request.app.state.evolution_manager.abort(run_id)
     return run_response(row)

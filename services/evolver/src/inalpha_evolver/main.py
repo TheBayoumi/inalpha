@@ -4,13 +4,15 @@
 
     uvicorn inalpha_evolver.main:app --port 8005 --reload
 """
+
 from __future__ import annotations
 
 import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from inalpha_shared.db import close_pool, init_pool
 from inalpha_shared.middleware import install_error_handler, install_request_logging
 
@@ -58,6 +60,17 @@ install_request_logging(app)
 install_error_handler(app)
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
+@app.get("/health", response_model=None)
+async def health(request: Request) -> dict[str, str] | JSONResponse:
+    manager = getattr(request.app.state, "evolution_manager", None)
+    if manager is None or not manager.healthy:
+        reason = getattr(manager, "unhealthy_reason", None) or "dispatcher unavailable"
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "service": "inalpha-evolver",
+                "reason": reason,
+            },
+        )
     return {"status": "ok", "service": "inalpha-evolver"}
