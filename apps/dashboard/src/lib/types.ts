@@ -467,7 +467,6 @@ export interface FactorsPayload {
 
 /** 统一活动流的事件类型(跨模块归一)。 */
 export type ActivityKind =
-  | "scheduler"
   | "permission"
   | "decision"
   | "risk"

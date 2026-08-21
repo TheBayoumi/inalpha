@@ -18,7 +18,6 @@ import { ActivityFeed } from "./ActivityFeed";
 const REFRESH_MS = 8000;
 
 const KINDS: ActivityKind[] = [
-  "scheduler",
   "permission",
   "decision",
   "risk",

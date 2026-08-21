@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const candidates = await backendFetch<FactorCandidate[]>(
       "factor",
       `/candidates${qs}`,
-      { auth: false, timeoutMs: 6000 },
+      { timeoutMs: 6000 },
     );
     return NextResponse.json({ available: true, candidates });
   } catch {
