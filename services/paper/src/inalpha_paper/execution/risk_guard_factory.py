@@ -17,8 +17,6 @@ D-9.1a 引入（issue #8）。在此之前 paper service 全局共享一个 ``Ri
 
 不在范围：
 - 持久化 cache（重启 → 空 cache，靠 lazy 重建）
-- ``risk_locks`` 表加 account_id 列（当前 lock 仍是 venue+symbol scoped 全局共享；
-  多账户 lock 隔离独立 issue）
 - ``starting_balance`` 仍从 config 读全局值（多账户独立余额留 D-10+）
 """
 from __future__ import annotations
@@ -123,6 +121,7 @@ class RiskGuardFactory:
                 guard = RiskGuard(
                     rules=rules,
                     starting_balance=self._cfg.starting_balance,
+                    account_id=str(account_id),
                 )
                 self._cache[account_id] = (repo, guard)
                 if len(self._cache) > self._cache_size:

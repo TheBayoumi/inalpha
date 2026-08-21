@@ -60,6 +60,7 @@ class RiskGuard:
     构造：
         rules: 已实例化的规则列表（用 ``build_rules`` 从 TOML 配置生成）
         starting_balance: 账户起始余额（喂给 ``check_global`` 算 drawdown）
+        account_id: 账户归属 UUID 字符串（锁隔离用）；None 表示非账户级（backtest / 测试）
 
     `rules` 为空 → ``check`` 直接返 ``None``（pass-through，与 RiskEngine 一致）。
     """
@@ -69,9 +70,11 @@ class RiskGuard:
         *,
         rules: list[RiskRule],
         starting_balance: float = 10_000.0,
+        account_id: str | None = None,
     ) -> None:
         self._rules = list(rules)
         self._starting_balance = starting_balance
+        self._account_id = account_id
 
     @property
     def rule_names(self) -> list[str]:
@@ -116,7 +119,7 @@ class RiskGuard:
             ("symbol", {"symbol": symbol_str}),
         ):
             existing = await locks_store.is_locked(
-                conn, now=now, scope=scope, side=side, **kwargs
+                conn, now=now, scope=scope, side=side, account_id=self._account_id, **kwargs
             )
             if existing is not None:
                 return _rejection_from_lock_row(existing)
@@ -129,7 +132,8 @@ class RiskGuard:
                 verdict = rule.check_global(now, side, balance)
                 if verdict is not None:
                     return await _record_and_build_rejection(
-                        conn, verdict, instrument_id=None, now=now
+                        conn, verdict, instrument_id=None, now=now,
+                        account_id=self._account_id,
                     )
 
         for rule in self._rules:
@@ -137,7 +141,8 @@ class RiskGuard:
                 verdict = rule.check_market(instrument_id, now, side, balance)
                 if verdict is not None:
                     return await _record_and_build_rejection(
-                        conn, verdict, instrument_id=None, now=now
+                        conn, verdict, instrument_id=None, now=now,
+                        account_id=self._account_id,
                     )
 
         for rule in self._rules:
@@ -145,7 +150,8 @@ class RiskGuard:
                 verdict = rule.check_symbol(instrument_id, now, side, balance)
                 if verdict is not None:
                     return await _record_and_build_rejection(
-                        conn, verdict, instrument_id=instrument_id, now=now
+                        conn, verdict, instrument_id=instrument_id, now=now,
+                        account_id=self._account_id,
                     )
 
         return None
@@ -167,6 +173,7 @@ async def _record_and_build_rejection(
     *,
     instrument_id: InstrumentId | None,
     now: datetime,
+    account_id: str | None,
 ) -> RiskRejection:
     """命中 rule → 写 ``risk_locks`` + 返 RiskRejection。"""
     market = verdict.lock_market
@@ -185,6 +192,7 @@ async def _record_and_build_rejection(
         market=market,
         symbol=symbol,
         side=verdict.lock_side,
+        account_id=account_id,
     )
     return RiskRejection(
         rule_name=verdict.rule_name,
