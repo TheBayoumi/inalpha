@@ -1,39 +1,38 @@
 import { NextResponse } from "next/server";
 
-import { evolutionBackendFetch } from "@/lib/evolver-backend";
+import { backendFetch, BackendError } from "@/lib/backend";
+import { isEvolutionEnabled } from "@/lib/evolution-capability";
 import type { EvolutionPayload, EvolutionRunSummary } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/evolution —— 演化运行列表（按 started_at 倒序）。
- *
- * 调 evolver 服务的 GET /api/v1/runs（目前内存存储，evolver 重启后清空）。
- * 每个 run 附带候选摘要（按 fitness 降序，取前 3 条）。
- */
-export async function GET() {
-  try {
-    const RUNS_LIMIT = 50;
-    const raw = await evolutionBackendFetch<EvolutionRunSummary[]>(
-      "/api/v1/runs",
-      { query: { limit: RUNS_LIMIT + 1 }, timeoutMs: 5000 },
-    );
-    const truncated = raw.length > RUNS_LIMIT;
-    const runs = raw.slice(0, RUNS_LIMIT);
+type RunsResponse = { items: EvolutionRunSummary[]; next_cursor: string | null };
 
+export async function GET(request: Request) {
+  if (!isEvolutionEnabled()) {
+    return NextResponse.json(
+      { error: "evolution service is not enabled", code: "EVOLUTION_SERVICE_DISABLED" },
+      { status: 503 },
+    );
+  }
+  const { searchParams } = new URL(request.url);
+  const limit = Math.min(Number(searchParams.get("limit") ?? 50), 50);
+  try {
+    const raw = await backendFetch<RunsResponse>("evolver", "/api/v1/runs", {
+      query: { limit, cursor: searchParams.get("cursor") ?? undefined },
+      timeoutMs: 5000,
+    });
     const payload: EvolutionPayload = {
-      runs,
-      truncated,
+      runs: raw.items,
+      nextCursor: raw.next_cursor,
       asOf: new Date().toISOString(),
     };
-    return NextResponse.json(payload, {
-      headers: { "Cache-Control": "no-store" },
-    });
-  } catch (err) {
-    console.error("[evolution] fetch failed", err);
+    return NextResponse.json(payload, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    const status = error instanceof BackendError ? error.status : 500;
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "unknown error" },
-      { status: 500 },
+      { error: error instanceof Error ? error.message : "unknown error" },
+      { status },
     );
   }
 }

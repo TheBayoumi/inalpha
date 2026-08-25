@@ -24,18 +24,6 @@ const MAX_RUNS_FOR_DECISIONS = 8;
 const ORDERS_LIMIT = 40;
 
 // ── 各数据源的原始响应(只声明用到的字段)──
-interface SchedulerRunsResp {
-  runs: Array<{
-    runId: string;
-    jobId: string;
-    scheduledAt: string;
-    startedAt: string;
-    finishedAt: string | null;
-    status: "running" | "success" | "failed" | "timeout";
-    trigger: "cron" | "manual";
-    error: unknown;
-  }>;
-}
 interface SchedulerJobsResp {
   schedulerRunning: boolean;
 }
@@ -81,9 +69,10 @@ interface RiskLocksResp {
 /**
  * GET /api/activity —— 跨模块 agent 活动流。
  *
- * 把 scheduler runs / 待审批 / 风控锁 / runner 生命周期与决策 / 订单 / 回测 归一成 ActivityEvent[],
- * 按时间倒序合并。每个源独立 try —— 任一不可用(尤其 mastra:4111 可能没起)只标记
- * sources.<x>=false,不拖垮整页;绝不把"取不到"静默当成"没有"。
+ * 把 待审批 / 风控锁 / runner 生命周期与决策 / 订单 / 回测 / 会话 归一成 ActivityEvent[],
+ * 按时间倒序合并。系统 cron 运行记录属系统级、非账户事件,不进活动流(只读运行状态做 KPI)。
+ * 每个源独立 try —— 任一不可用(尤其 mastra:4111 可能没起)只标记 sources.<x>=false,
+ * 不拖垮整页;绝不把"取不到"静默当成"没有"。
  */
 export async function GET() {
   const sources = {
@@ -104,10 +93,10 @@ export async function GET() {
   let pendingCount = 0;
   let activeLockCount = 0;
 
-  // mastra(scheduler / permissions):dev 端不需要 JWT,auth:false。
+  // mastra scheduler 只读运行状态做 KPI(系统级,无 per-user 数据)保持 auth:false;
+  // permissions 需 JWT(走默认 auth)。
   const [
     jobsR,
-    runsR,
     pendingR,
     approvalHistoryR,
     locksR,
@@ -120,18 +109,11 @@ export async function GET() {
         auth: false,
         timeoutMs: 5000,
       }),
-      backendFetch<SchedulerRunsResp>("mastra", "/scheduler/runs", {
-        auth: false,
-        query: { limit: 50 },
-        timeoutMs: 5000,
-      }),
       backendFetch<PendingResp>("mastra", "/permissions/pending", {
-        auth: false,
         timeoutMs: 5000,
       }),
       // 审批审计历史(终态)—— 决策/超时/重启扫尾后仍可回看,不再"决策即消失"。
       backendFetch<ApprovalHistoryResp>("mastra", "/permissions/history", {
-        auth: false,
         query: { limit: 20 },
         timeoutMs: 5000,
       }),
@@ -158,30 +140,9 @@ export async function GET() {
       listChatThreads(200, { backfillTitles: false }),
     ]);
 
-  // ── scheduler ──
+  // ── scheduler(仅运行状态 KPI;cron 运行记录属系统级,不进账户活动流)──
   if (jobsR.status === "fulfilled") schedulerRunning = jobsR.value.schedulerRunning;
   else sources.scheduler = false;
-  if (runsR.status === "fulfilled") {
-    for (const r of runsR.value.runs) {
-      events.push({
-        id: `sched:${r.runId}`,
-        kind: "scheduler",
-        ts: r.finishedAt ?? r.startedAt ?? r.scheduledAt,
-        title: r.jobId,
-        detail: `${r.trigger} · ${r.status}`,
-        outcome: r.status,
-        tone:
-          r.status === "success"
-            ? "bull"
-            : r.status === "running"
-              ? "cyan"
-              : "fox",
-        href: null,
-      });
-    }
-  } else {
-    sources.scheduler = false;
-  }
 
   // ── permissions(待审批)──
   if (pendingR.status === "fulfilled") {
@@ -488,7 +449,6 @@ function orderTone(status: string): ActivityTone {
 
 function countByKind(events: ActivityEvent[]): Record<ActivityKind, number> {
   const c: Record<ActivityKind, number> = {
-    scheduler: 0,
     permission: 0,
     decision: 0,
     risk: 0,

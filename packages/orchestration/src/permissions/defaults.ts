@@ -43,6 +43,8 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
     "scheduler.create_job",
     "scheduler.set_enabled",
     "scheduler.trigger_job",
+    "evolver.get_evolution",
+    "evolver.get_candidate",
 
     // Swarm 批量回测（ADR-0025）：只读，无下单路径
     "swarm.*",
@@ -90,6 +92,8 @@ export const DEFAULT_PERMISSIONS: PermissionConfig = {
     // reset 是破坏性操作（删全部持仓行），后端另有 running-run 409 硬守门。
     "paper.deposit_cash",
     "paper.reset_account",
+    "evolver.run_evolution",
+    "evolver.abort_evolution",
   ],
 
   deny: [

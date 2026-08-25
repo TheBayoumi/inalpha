@@ -1,80 +1,49 @@
-/**
- * ``PendingApprovalsStore`` —— in-memory ask 审批挂起池（D-9.1b / ADR-0018）。
- *
- * ``permissionResolver`` 返 ``"ask"`` 时，``withHooks`` 不再直接 isError，而是：
- *
- * 1. 调 ``store.request({toolName, toolInput, sessionId})`` 注册挂起项 + 拿 promise
- * 2. promise 等到前端 POST ``/permissions/{requestId}/respond`` 调 ``store.respond``
- * 3. 30s 超时（可配）→ 自动 deny + 从池中移除
- * 4. tool 拿到 decision：``"allow"`` → 真跑 execute；``"deny"`` → isError 提示
- *
- * 设计取舍：
- *
- * - **进程内 Map**：单 mastra runtime 实例，重启即失效；多实例部署需要换 Redis
- *   等共享存储（D-10+）。当前 dev / 单 instance prod 都够用
- * - **审计历史落 Postgres**（D-12 / migration 0021）：每条审批全生命周期落
- *   ``pending_approvals`` 表，dashboard 可回看终态；重启时启动 sweep 把遗留
- *   pending 行置 ``expired_restart``。落库 fail-open —— 闸门永远是内存 Promise
- * - **明确 fail-closed**：超时 / unknown 决策都按 deny 处理；用户关页面不会让
- *   挂起任务永远卡住
- * - **审计**：respond 时 log decision；超时自动 deny 也 log
- *
- * 引用：ADR-0018（askUserChoice）/ task D-9.1b。
- */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { insertPending, markResolved } from "./repo.js";
 
 export type PendingDecision = "allow" | "deny";
 
-/** 前端可见的挂起项视图（不含 resolver 闭包）。 */
 export interface PendingApprovalView {
   requestId: string;
   toolName: string;
   toolInput: unknown;
-  sessionId?: string;
-  createdAt: string; // ISO
-  deadline: string; // ISO
-}
-
-interface PendingApprovalRecord extends PendingApprovalView {
-  resolve: (decision: PendingDecision) => void;
-  timer: ReturnType<typeof setTimeout>;
+  sessionId: string;
+  inputDigest: string;
+  createdAt: string;
+  deadline: string;
 }
 
 export interface PendingRequestArgs {
   toolName: string;
   toolInput: unknown;
-  sessionId?: string;
-  authSub?: string;
+  approvalInput: unknown;
+  sessionId: string;
+  authSub: string;
   timeoutMs?: number;
 }
 
-export interface PendingRequestResult {
-  decision: PendingDecision;
-  requestId: string;
-  /** ``"user"`` = 前端响应；``"timeout"`` = 超时 deny。 */
-  via: "user" | "timeout";
+export interface PendingConsumeArgs {
+  toolName: string;
+  approvalInput: unknown;
+  sessionId: string;
+  authSub: string;
+}
+
+interface PendingApprovalRecord extends PendingApprovalView {
+  authSub: string;
+  status: "pending" | "approved";
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-/**
- * Telemetry sink —— 默认 ``console.log(JSON.stringify(record))``，与 ``audit-log.ts``
- * + ``ask-cache.ts`` 同款 stdout-friendly 格式。测试可注入自定义 sink。
- */
 export type PendingTelemetrySink = (record: Record<string, unknown>) => void;
 
-const defaultPendingTelemetrySink: PendingTelemetrySink = (r) => {
-  console.log(JSON.stringify(r));
+const defaultPendingTelemetrySink: PendingTelemetrySink = (record) => {
+  console.log(JSON.stringify(record));
 };
 
-/**
- * 审计持久层接口（D-12 / migration 0021）—— 实现见 ``repo.ts``。
- *
- * **审计面不是闸门**：两个方法都必须自吞错误（fail-open），store 侧再兜一层
- * fire-and-forget；决策语义（fail-closed deny）完全由内存 Promise 保证。
- */
 export interface ApprovalPersistence {
   insertPending(view: PendingApprovalView, authSub?: string): Promise<void>;
   markResolved(
@@ -84,11 +53,15 @@ export interface ApprovalPersistence {
   ): Promise<void>;
 }
 
-/**
- * 进程内挂起池。``mastra/index.ts`` 在 runtime 启动时共享单例；测试可 new 独立实例。
- */
+/** Produces a deterministic SHA-256 digest for an approval-defining input. */
+export function approvalInputDigest(input: unknown): string {
+  return createHash("sha256").update(stableStringify(input)).digest("hex");
+}
+
+/** Stores pending and approved decisions until one matching tool call consumes them. */
 export class PendingApprovalsStore {
-  private readonly pending = new Map<string, PendingApprovalRecord>();
+  private readonly records = new Map<string, PendingApprovalRecord>();
+  private readonly identityIndex = new Map<string, string>();
   private readonly telemetry: PendingTelemetrySink;
   private readonly persistence?: ApprovalPersistence;
 
@@ -97,126 +70,186 @@ export class PendingApprovalsStore {
     this.persistence = persistence;
   }
 
-  /** fire-and-forget 落库 —— 审计面任何异常都不许影响审批流。 */
-  private persist(fn: (p: ApprovalPersistence) => Promise<void>): void {
-    if (!this.persistence) return;
-    try {
-      void fn(this.persistence).catch((err) => {
-        console.error("[pending] 审批审计落库失败（审批流不受影响）:", err);
-      });
-    } catch (err) {
-      console.error("[pending] 审批审计落库失败（审批流不受影响）:", err);
-    }
-  }
+  /** Registers one owner-bound approval request, deduplicating identical active requests. */
+  request(args: PendingRequestArgs): PendingApprovalView {
+    const identity = this.identityFor(args);
+    const existingId = this.identityIndex.get(identity);
+    const existing = existingId ? this.records.get(existingId) : undefined;
+    if (existing) return this.toView(existing);
 
-  /**
-   * 注册一个挂起审批，返 promise 等用户决策。
-   *
-   * 超时（默认 30s）自动 deny，并从池中移除；调用方 await 拿到 ``{decision, requestId, via}``。
-   */
-  request(args: PendingRequestArgs): Promise<PendingRequestResult> {
     const requestId = randomUUID();
-    const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeoutMs = args.timeoutMs && args.timeoutMs > 0 ? args.timeoutMs : DEFAULT_TIMEOUT_MS;
     const createdAt = new Date();
-    const deadline = new Date(createdAt.getTime() + timeoutMs);
-
+    const record: PendingApprovalRecord = {
+      requestId,
+      toolName: args.toolName,
+      toolInput: args.toolInput,
+      sessionId: args.sessionId,
+      authSub: args.authSub,
+      inputDigest: approvalInputDigest(args.approvalInput),
+      status: "pending",
+      createdAt: createdAt.toISOString(),
+      deadline: new Date(createdAt.getTime() + timeoutMs).toISOString(),
+      timer: setTimeout(() => this.expire(requestId), timeoutMs),
+    };
+    this.records.set(requestId, record);
+    this.identityIndex.set(identity, requestId);
     this.telemetry({
       event: "ask_pending_requested",
       requestId,
       toolName: args.toolName,
-      sessionId: args.sessionId ?? null,
+      sessionId: args.sessionId,
+      authSub: args.authSub,
+      inputDigest: record.inputDigest,
       timeoutMs,
-      ts: createdAt.toISOString(),
+      ts: record.createdAt,
     });
-
-    return new Promise<PendingRequestResult>((resolve) => {
-      const timer = setTimeout(() => {
-        const record = this.pending.get(requestId);
-        if (record) {
-          this.pending.delete(requestId);
-          this.telemetry({
-            event: "ask_pending_resolved",
-            requestId,
-            toolName: args.toolName,
-            sessionId: args.sessionId ?? null,
-            decision: "deny",
-            via: "timeout",
-            latency_ms: timeoutMs,
-            ts: new Date().toISOString(),
-          });
-          this.persist((p) => p.markResolved(requestId, "deny", "timeout"));
-          resolve({ decision: "deny", requestId, via: "timeout" });
-        }
-      }, timeoutMs);
-
-      const record: PendingApprovalRecord = {
-        requestId,
-        toolName: args.toolName,
-        toolInput: args.toolInput,
-        sessionId: args.sessionId,
-        createdAt: createdAt.toISOString(),
-        deadline: deadline.toISOString(),
-        timer,
-        resolve: (decision) => {
-          clearTimeout(timer);
-          this.pending.delete(requestId);
-          this.telemetry({
-            event: "ask_pending_resolved",
-            requestId,
-            toolName: args.toolName,
-            sessionId: args.sessionId ?? null,
-            decision,
-            via: "user",
-            latency_ms: Date.now() - createdAt.getTime(),
-            ts: new Date().toISOString(),
-          });
-          this.persist((p) => p.markResolved(requestId, decision, "user"));
-          resolve({ decision, requestId, via: "user" });
-        },
-      };
-      this.pending.set(requestId, record);
-      const { resolve: _r, timer: _t, ...view } = record;
-      this.persist((p) => p.insertPending(view, args.authSub));
-    });
+    this.persist((p) => p.insertPending(this.toView(record), args.authSub));
+    return this.toView(record);
   }
 
-  /** 前端 GET /permissions/pending —— 列出当前挂起项。 */
-  list(): PendingApprovalView[] {
-    return Array.from(this.pending.values()).map(
-      ({ resolve: _r, timer: _t, ...view }) => view,
-    );
+  /** Lists only pending requests owned by the authenticated subject. */
+  list(authSub: string): PendingApprovalView[] {
+    return Array.from(this.records.values())
+      .filter((record) => record.authSub === authSub && record.status === "pending")
+      .map((record) => this.toView(record));
   }
 
-  /**
-   * 前端 POST /permissions/{id}/respond —— 决策。
-   *
-   * Returns ``true`` 表示决策被消费；``false`` 表示挂起项不存在
-   * （已超时 / 已被消费 / 无效 id）—— 路由应回 404。
-   */
-  respond(requestId: string, decision: PendingDecision): boolean {
-    const record = this.pending.get(requestId);
-    if (!record) return false;
-    record.resolve(decision);
+  /** Applies an explicit owner-authenticated decision; approved records remain consumable once. */
+  respond(requestId: string, decision: PendingDecision, authSub: string): boolean {
+    const record = this.records.get(requestId);
+    if (!record || record.authSub !== authSub || record.status !== "pending") return false;
+
+    this.telemetry({
+      event: "ask_pending_resolved",
+      requestId,
+      toolName: record.toolName,
+      sessionId: record.sessionId,
+      authSub,
+      decision,
+      via: "user",
+      ts: new Date().toISOString(),
+    });
+    this.persist((p) => p.markResolved(requestId, decision, "user"));
+    if (decision === "allow") {
+      record.status = "approved";
+    } else {
+      this.remove(record);
+    }
     return true;
   }
 
-  /** 当前挂起项数量（监控 / 测试用）。 */
-  size(): number {
-    return this.pending.size;
+  /** Atomically consumes one approved decision matching owner, thread, tool, and input digest. */
+  consumeApproved(args: PendingConsumeArgs): boolean {
+    const identity = this.identityFor(args);
+    const requestId = this.identityIndex.get(identity);
+    const record = requestId ? this.records.get(requestId) : undefined;
+    if (!record || record.status !== "approved") return false;
+    if (Date.now() >= Date.parse(record.deadline)) {
+      this.expire(record.requestId);
+      return false;
+    }
+    this.remove(record);
+    this.telemetry({
+      event: "ask_approval_consumed",
+      requestId: record.requestId,
+      toolName: record.toolName,
+      sessionId: record.sessionId,
+      authSub: record.authSub,
+      inputDigest: record.inputDigest,
+      ts: new Date().toISOString(),
+    });
+    return true;
   }
 
-  /** 清空所有挂起（测试用 / shutdown 时调）。所有挂起按 deny 解决。 */
+  /** Returns the number of active pending or approved records. */
+  size(): number {
+    return this.records.size;
+  }
+
+  /** Revokes every active record during tests or shutdown. */
   clearAll(reason: PendingDecision = "deny"): void {
-    for (const record of Array.from(this.pending.values())) {
-      record.resolve(reason);
+    for (const record of Array.from(this.records.values())) {
+      this.remove(record);
+      if (record.status === "pending") {
+        this.persist((p) => p.markResolved(record.requestId, reason, "user"));
+      }
+    }
+  }
+
+  private expire(requestId: string): void {
+    const record = this.records.get(requestId);
+    if (!record) return;
+    this.remove(record);
+    this.telemetry({
+      event: "ask_pending_resolved",
+      requestId,
+      toolName: record.toolName,
+      sessionId: record.sessionId,
+      authSub: record.authSub,
+      decision: "deny",
+      via: "timeout",
+      ts: new Date().toISOString(),
+    });
+    if (record.status === "pending") {
+      this.persist((p) => p.markResolved(requestId, "deny", "timeout"));
+    }
+  }
+
+  private remove(record: PendingApprovalRecord): void {
+    clearTimeout(record.timer);
+    this.records.delete(record.requestId);
+    this.identityIndex.delete(
+      this.identityKey(record.authSub, record.sessionId, record.toolName, record.inputDigest),
+    );
+  }
+
+  private identityFor(args: PendingConsumeArgs): string {
+    return this.identityKey(
+      args.authSub,
+      args.sessionId,
+      args.toolName,
+      approvalInputDigest(args.approvalInput),
+    );
+  }
+
+  private identityKey(
+    authSub: string,
+    sessionId: string,
+    toolName: string,
+    inputDigest: string,
+  ): string {
+    return `${authSub}\u0000${sessionId}\u0000${toolName}\u0000${inputDigest}`;
+  }
+
+  private toView(record: PendingApprovalRecord): PendingApprovalView {
+    const { requestId, toolName, toolInput, sessionId, inputDigest, createdAt, deadline } = record;
+    return { requestId, toolName, toolInput, sessionId, inputDigest, createdAt, deadline };
+  }
+
+  private persist(fn: (persistence: ApprovalPersistence) => Promise<void>): void {
+    if (!this.persistence) return;
+    try {
+      void fn(this.persistence).catch((error) => {
+        console.error("[pending] 审批审计落库失败（审批流不受影响）:", error);
+      });
+    } catch (error) {
+      console.error("[pending] 审批审计落库失败（审批流不受影响）:", error);
     }
   }
 }
 
-/**
- * 进程内单例，由 ``withHooks`` 与 HTTP routes 共用。
- * 默认接 Postgres 审计持久层（repo.ts，fail-open）；测试自建实例不传即纯内存。
- */
+function stableStringify(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(object[key])}`)
+    .join(",")}}`;
+}
+
 export const pendingApprovals = new PendingApprovalsStore(undefined, {
   insertPending,
   markResolved,

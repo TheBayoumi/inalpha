@@ -16,6 +16,9 @@ export type PageKind =
   | "risk"
   | "activity"
   | "divination"
+  | "evolution_list"
+  | "evolution_run_detail"
+  | "evolution_candidate_detail"
   | "overview";
 
 export interface PageContext {
@@ -59,6 +62,17 @@ export function parsePageContext(pathname: string): PageContext {
       return { kind: "activity", pathname };
     case "divination":
       return { kind: "divination", pathname };
+    case "evolution":
+      if (second === "candidates" && segs[2] && UUID_RE.test(segs[2])) {
+        return {
+          kind: "evolution_candidate_detail",
+          id: segs[2],
+          pathname,
+        };
+      }
+      return second && UUID_RE.test(second)
+        ? { kind: "evolution_run_detail", id: second, pathname }
+        : { kind: "evolution_list", pathname };
     default:
       // 未知路由 → 当总览兜底,避免误带具体实体上下文。
       return { kind: "overview", pathname };
@@ -74,6 +88,10 @@ export function buildPageContextEnvelope(ctx: PageContext): string {
   if (ctx.kind === "runner_detail" && ctx.id) lines.push(`run_id=${ctx.id}`);
   if (ctx.kind === "candidate_detail" && ctx.id)
     lines.push(`candidate_id=${ctx.id}`);
+  if (ctx.kind === "evolution_run_detail" && ctx.id)
+    lines.push(`evolution_run_id=${ctx.id}`);
+  if (ctx.kind === "evolution_candidate_detail" && ctx.id)
+    lines.push(`evolution_candidate_id=${ctx.id}`);
   lines.push(`path=${ctx.pathname}`);
   return `<page_context>\n${lines.join("\n")}\n</page_context>\n\n`;
 }

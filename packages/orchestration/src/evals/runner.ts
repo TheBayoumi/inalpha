@@ -1,6 +1,6 @@
 import { createOrchestrator } from "../mastra/agents/create-orchestrator.js";
-import { AskApprovalCache } from "../permissions/ask-cache.js";
 import { wireToolList } from "../mastra/tool-wiring.js";
+import { PendingApprovalsStore } from "../permissions/pending.js";
 import { EvalFailureError } from "./errors.js";
 import { createFixtureTools } from "./fixture-tools.js";
 import { gradeTrial } from "./grader.js";
@@ -33,18 +33,10 @@ export async function runEvalTrial(
   if (!model) return failedResult(task, options, started, "live_provider", "live model missing");
 
   const fixtureSet = createFixtureTools(task);
-  const askCache = new AskApprovalCache(1_000, () => undefined);
-  const pending = {
-    request: async () => ({
-      decision: "deny" as const,
-      requestId: `eval-pending:${task.id}`,
-      via: "timeout" as const,
-    }),
-  };
+  const pendingApprovals = new PendingApprovalsStore(() => undefined);
   const wired = wireToolList(fixtureSet.tools, {
     auditSink: () => undefined,
-    askCache,
-    pendingApprovals: pending,
+    pendingApprovals,
     askTimeoutMs: 100,
   });
   const agent = createOrchestrator({
@@ -110,7 +102,7 @@ export async function runEvalTrial(
     return failedResult(task, options, started, classifyFailure(error), messageOf(error));
   } finally {
     clearTimeout(timer);
-    askCache.clear();
+    pendingApprovals.clearAll();
     restoreFetch();
     releaseNetwork();
   }

@@ -2,9 +2,9 @@
 # dev.sh —— 一键起 Inalpha 本地 dev 环境
 #
 # 用法:
-#   bash scripts/dev.sh [up]     # 起 data + paper + research + orchestration（默认）
+#   bash scripts/dev.sh [up]     # 起五个 Python service + orchestration（默认）
 #   bash scripts/dev.sh stop     # 停止所有由本脚本拉起的进程
-#   bash scripts/dev.sh logs     # 跟随四个 service 的日志
+#   bash scripts/dev.sh logs     # 跟随所有 service 的日志
 #   bash scripts/dev.sh status   # 检查端口占用 + 已起进程的健康状态
 #
 # 选项:
@@ -16,6 +16,7 @@
 #   8002  services/paper      (FastAPI + uvicorn)  GET /health
 #   8003  services/research   (FastAPI + uvicorn)  GET /health
 #   8004  services/factor     (FastAPI + uvicorn)  GET /health
+#   8005  services/evolver    (FastAPI + uvicorn)  GET /health
 #   4111  mastra dev          (默认端口)            TCP connect
 #
 # 前置条件:
@@ -23,6 +24,7 @@
 #   - services/data 需要可达的 Postgres + .env 配置 (DATABASE_URL / BINANCE_*)
 #   - services/paper 在 D-8a 不强依赖 DB
 #   - services/research 需要 LLM_API_KEY（默认 deepseek；LLM_PROVIDER=fake 时可空）
+#   - services/evolver 强制 DATABASE_URL，E1 只允许单 worker
 
 set -euo pipefail
 
@@ -104,7 +106,7 @@ wait_tcp_open() {
 
 precheck_ports() {
     local conflict=0
-    for entry in "data:8001" "paper:8002" "research:8003" "factor:8004" "orchestration:4111"; do
+    for entry in "data:8001" "paper:8002" "research:8003" "factor:8004" "evolver:8005" "orchestration:4111"; do
         local name="${entry%%:*}"
         local port="${entry##*:}"
         local owner
@@ -156,10 +158,10 @@ start_service() {
 
 verify_ready() {
     # 等待所有 service 真正就绪。返回 0 = 全好；1 = 至少一个没起来
-    # 超时各自不同: data 60s (Postgres + Binance lifespan 慢), paper 30s, research 30s, mastra 90s
+    # 超时各自不同:data 60s，其余 Python service 30s，mastra 90s
     local all_ok=1
     echo ""
-    echo "[wait] 验证 service 就绪 (data 60s · paper 30s · research 30s · factor 30s · mastra 90s)..."
+    echo "[wait] 验证 service 就绪 (data 60s · paper/research/factor/evolver 30s · mastra 90s)..."
 
     if wait_http_ok "http://127.0.0.1:8001/health" 60; then
         echo "  ✓ data        http://127.0.0.1:8001/health"
@@ -186,6 +188,13 @@ verify_ready() {
         echo "  ✓ factor      http://127.0.0.1:8004/health"
     else
         echo "  ✗ factor      未就绪 — 看 ${LOG_DIR}/factor.log"
+        all_ok=0
+    fi
+
+    if wait_http_ok "http://127.0.0.1:8005/health" 30; then
+        echo "  ✓ evolver     http://127.0.0.1:8005/health"
+    else
+        echo "  ✗ evolver     未就绪 — 看 ${LOG_DIR}/evolver.log"
         all_ok=0
     fi
 
@@ -240,7 +249,7 @@ follow_logs() {
 
 status_report() {
     echo "=== 端口占用 ==="
-    for entry in "data:8001" "paper:8002" "research:8003" "factor:8004" "orchestration:4111"; do
+    for entry in "data:8001" "paper:8002" "research:8003" "factor:8004" "evolver:8005" "orchestration:4111"; do
         local name="${entry%%:*}"
         local port="${entry##*:}"
         local owner
@@ -275,6 +284,11 @@ status_report() {
     else
         echo "  ✗ factor    not ready"
     fi
+    if curl -fsS -o /dev/null --max-time 1 "http://127.0.0.1:8005/health" 2>/dev/null; then
+        echo "  ✓ evolver   http://127.0.0.1:8005/health"
+    else
+        echo "  ✗ evolver   not ready"
+    fi
     if (echo > "/dev/tcp/127.0.0.1/4111") 2>/dev/null; then
         echo "  ✓ mastra    http://127.0.0.1:4111 (TCP open)"
     else
@@ -299,6 +313,9 @@ case "$CMD" in
         start_service "factor" \
             "${ROOT}/services/factor" \
             "uv run uvicorn inalpha_factor.main:app --host 127.0.0.1 --port 8004 --reload"
+        start_service "evolver" \
+            "${ROOT}/services/evolver" \
+            "uv run uvicorn inalpha_evolver.main:app --host 127.0.0.1 --port 8005 --reload"
         start_service "orchestration" \
             "${ROOT}/packages/orchestration" \
             "pnpm dev"
@@ -313,7 +330,7 @@ case "$CMD" in
             echo "   日志:    bash scripts/dev.sh logs"
             echo "   状态:    bash scripts/dev.sh status"
             echo "   停止:    bash scripts/dev.sh stop"
-            echo "   端点:    data=http://127.0.0.1:8001  paper=http://127.0.0.1:8002  research=http://127.0.0.1:8003  factor=http://127.0.0.1:8004  mastra=http://127.0.0.1:4111"
+            echo "   端点:    data=http://127.0.0.1:8001  paper=http://127.0.0.1:8002  research=http://127.0.0.1:8003  factor=http://127.0.0.1:8004  evolver=http://127.0.0.1:8005  mastra=http://127.0.0.1:4111"
         else
             echo ""
             echo "⚠️  至少一个 service 没起来。查日志: bash scripts/dev.sh logs" >&2

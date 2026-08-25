@@ -21,6 +21,7 @@ from uuid import UUID
 from inalpha_shared.errors import NotFoundError, ValidationError
 from psycopg import AsyncConnection
 
+from .bar_conversion import bar_from_dict as _bar_from_dict
 from .config import get_paper_settings
 from .data_client import DataClient
 from .engine.backtest import BacktestEngine, CVReport, run_cv_backtest
@@ -30,16 +31,16 @@ from .engine.cv import (
     PurgedKFold,
     WalkForward,
 )
-from .engine.metrics import (
-    bar_returns,
-    max_drawdown_pct,
-    periods_per_year,
-    sharpe_ratio,
-)
 from .engine.pool import get_pool
-from .engine.robustness import bootstrap_sharpe_ci
-from .kernel.clock import datetime_to_ns
+from .evaluation_metrics import (
+    fitness_from_report as _fitness_from_report,
+)
+from .evaluation_metrics import (
+    validation_from_report as _validation_from_report,
+)
+from .evaluation_worker import run_engine_worker as run_engine_in_subprocess
 from .kernel.identifiers import InstrumentId
+from .market_evaluation import build_market_evaluation_context
 from .model.data import Bar
 from .schemas import (
     BacktestRequest,
@@ -51,21 +52,14 @@ from .schemas import (
     PositionSnapshot,
     SharpeCI,
     ValidationBlock,
-    ValidationSegment,
 )
 from .storage import backtest_runs as backtest_runs_store
 from .storage import backtest_trades as backtest_trades_store
 from .storage import strategy_candidates as candidates_store
 from .strategies import BASELINE_BUY_AND_HOLD, get_strategy_class
 from .strategy.base import Strategy
-from .strategy_authoring import (
-    FitnessInputs,
-    audit_strategy_code,
-    calmar_from_report,
-    compose_fitness,
-    load_strategy_class,
-    verify_strategy_contract,
-)
+from .strategy_authoring import audit_strategy_code, load_strategy_class
+from .strategy_evaluation import evaluate_buy_and_hold, evaluate_strategy_source
 
 if TYPE_CHECKING:
     from concurrent.futures import ProcessPoolExecutor
@@ -91,6 +85,12 @@ async def run_backtest(
               落库失败不阻断回测返回（warning log）—— D-8b' 容错原则。
     """
     started_at = datetime.now(tz=UTC)
+    market_context = build_market_evaluation_context(
+        venue=req.venue,
+        symbol=req.symbol,
+        timeframe=req.timeframe,
+        as_of=req.to_ts,
+    )
     # 1. 拉数据 —— DataClient.get_bars 默认 fresh=True：先 POST /backfill/bars
     # 把 to_ts 之前最新 K 线补齐，再 GET /bars。新 symbol / 新窗口在这一步自愈。
     raw_bars = await data_client.get_bars(
@@ -102,7 +102,10 @@ async def run_backtest(
     )
 
     instrument_id = InstrumentId(symbol=req.symbol, venue=req.venue)
-    bars = [_bar_from_dict(b, instrument_id, req.timeframe) for b in raw_bars]
+    bars = [
+        _bar_from_dict(b, instrument_id, market_context.canonical_timeframe)
+        for b in raw_bars
+    ]
     if not bars:
         raise ValidationError(
             f"data-service returned 0 bars for {req.symbol}@{req.venue} "
@@ -134,13 +137,6 @@ async def run_backtest(
                 code="CANDIDATE_NOT_FOUND",
             )
         candidate_code = candidate_row["code"]
-        # 二次 AST 审计 —— 即使入库时已审过，跑回测前再审一次
-        reaudit = audit_strategy_code(candidate_code)
-        if not reaudit.ok:
-            raise ValidationError(
-                f"candidate {req.candidate_id} failed re-audit: {reaudit.reason()}",
-                code="CANDIDATE_REAUDIT_FAILED",
-            )
 
     # 用作落库 / 响应的 strategy_code（"candidate:<uuid>" 与内置 ID 同字段区分）
     effective_strategy_code = (
@@ -153,48 +149,54 @@ async def run_backtest(
     # 优先级：pool 已起（生产）→ 走 pool；未起（旧测试 / 同步入口）→ 同进程跑兜底
     # D-9 candidate 路径：同时并发跑一次 buy_and_hold baseline 做 alpha 对照
     # （pool 已起时真并行；未起时退化为顺序但语义不变）
-    candidate_task = _run_engine(
-        bars=bars,
-        instrument_id=instrument_id,
-        timeframe=req.timeframe,
-        strategy_id=req.strategy_id,
-        candidate_code=candidate_code,
-        params=req.params,
-        initial_cash=req.initial_cash,
-        fee_rate=req.fee_rate,
-        # perp 透传:做空策略须在 perp 回测才能真做空(spot 下裸空被守门拒=0 成交)。
-        # baseline(下方 buy_and_hold)保持 spot,作 alpha 对照锚点。
-        trading_mode=req.trading_mode,
-        leverage=req.leverage,
-        funding_rate=req.funding_rate,
-    )
+    bars_per_year = float(market_context.annualization_periods)
+    source_evaluation = None
+    baseline_evaluation = None
     try:
-        if req.candidate_id is not None:
-            # baseline = "first bar all-in 持有到收盘"。BuyAndHoldStrategy 在
-            # bars[0] 发单 → bars[1] 才撮合（避免 lookahead）。撮合层 cash 守门
-            # 用的是 bars[1].open，所以预算 qty 也用 bars[1].open；fee_rate +
-            # 0.5% 容忍连续两根 bar 间的价格 jitter（一般 < 1%）。
-            fill_open = bars[1].open if len(bars) > 1 else bars[0].open
-            if fill_open <= 0:
-                raise ValidationError(
-                    f"bar open price must be positive, got {fill_open} "
-                    f"for {req.symbol}@{req.venue}; data may be corrupt",
-                    code="INVALID_BAR_PRICE",
-                )
-            baseline_qty = req.initial_cash / fill_open / (1.0 + req.fee_rate + 0.005)
-            baseline_task = _run_engine(
+        if candidate_code is not None:
+            source_evaluation, baseline_evaluation = await asyncio.gather(
+                evaluate_strategy_source(
+                    source_code=candidate_code,
+                    bars=bars,
+                    instrument_id=instrument_id,
+                    timeframe=market_context.canonical_timeframe,
+                    run_engine=_run_engine,
+                    params=req.params,
+                    initial_cash=req.initial_cash,
+                    fee_rate=req.fee_rate,
+                    validation_split=req.validation_split,
+                    annualization_periods=bars_per_year,
+                    trading_mode=req.trading_mode,
+                    leverage=req.leverage,
+                    funding_rate=req.funding_rate,
+                ),
+                evaluate_buy_and_hold(
+                    bars=bars,
+                    instrument_id=instrument_id,
+                    timeframe=market_context.canonical_timeframe,
+                    run_engine=_run_engine,
+                    initial_cash=req.initial_cash,
+                    fee_rate=req.fee_rate,
+                    annualization_periods=bars_per_year,
+                ),
+            )
+            report = source_evaluation.report
+            baseline_report = baseline_evaluation.report
+        else:
+            report = await _run_engine(
                 bars=bars,
                 instrument_id=instrument_id,
-                timeframe=req.timeframe,
-                strategy_id=BASELINE_BUY_AND_HOLD,
+                timeframe=market_context.canonical_timeframe,
+                strategy_id=req.strategy_id,
                 candidate_code=None,
-                params={"trade_size": baseline_qty},
+                params=req.params,
                 initial_cash=req.initial_cash,
                 fee_rate=req.fee_rate,
+                trading_mode=req.trading_mode,
+                leverage=req.leverage,
+                funding_rate=req.funding_rate,
+                annualization_periods=market_context.annualization_periods,
             )
-            report, baseline_report = await asyncio.gather(candidate_task, baseline_task)
-        else:
-            report = await candidate_task
             baseline_report = None
     except (AttributeError, TypeError, ValueError, KeyError, IndexError, ZeroDivisionError) as exc:
         # D-9 · candidate 路径策略源码运行时错（字段名 / 类型 / 数学）→ 翻 422 让 agent
@@ -238,16 +240,23 @@ async def run_backtest(
     finished_at = datetime.now(tz=UTC)
 
     # 5. 计算 fitness（D-9 · ADR-0020 E1：多目标合成，不允许裸 Sharpe 排序候选）
-    bars_per_year = float(periods_per_year(req.timeframe))
-    fitness_value = _fitness_from_report(report, bars_per_year=bars_per_year)
+    fitness_value = (
+        source_evaluation.snapshot.fitness
+        if source_evaluation is not None
+        else _fitness_from_report(report, bars_per_year=bars_per_year)
+    )
     # calmar 指标落库一律取 report.calmar —— 不再走 calmar_from_report 第二条
     # 计算路径,否则 fitness 侧公式一变,candidates 与 backtest_runs 两表的
     # calmar 会静默分叉。
 
     # 5a'. D-12：holdout 时间切分验证（单次运行按曲线切段，不二次跑引擎）。
     # baseline 不切段——alpha 对照仍看全窗。
-    validation: ValidationBlock | None = None
-    if req.validation_split > 0:
+    validation: ValidationBlock | None = (
+        source_evaluation.snapshot.validation
+        if source_evaluation is not None
+        else None
+    )
+    if source_evaluation is None and req.validation_split > 0:
         validation = _validation_from_report(
             report, split=req.validation_split, bars_per_year=bars_per_year
         )
@@ -255,8 +264,12 @@ async def run_backtest(
     # 5b. D-9 candidate 路径：组装 baseline 对照（buy_and_hold 同 symbol/timeframe/period）
     baseline_snapshot: BaselineSnapshot | None = None
     if baseline_report is not None:
-        baseline_fitness = _fitness_from_report(
-            baseline_report, bars_per_year=bars_per_year
+        baseline_fitness = (
+            baseline_evaluation.snapshot.fitness
+            if baseline_evaluation is not None
+            else _fitness_from_report(
+                baseline_report, bars_per_year=bars_per_year
+            )
         )
         baseline_snapshot = BaselineSnapshot(
             strategy_id=BASELINE_BUY_AND_HOLD,
@@ -378,99 +391,6 @@ async def run_backtest(
     )
 
 
-def _validation_from_report(
-    report: Any,
-    *,
-    split: float,
-    bars_per_year: float,
-) -> ValidationBlock | None:
-    """单次回测结果按时间切 train/holdout 两段算指标（D-12 · 纯函数）。
-
-    切的是 ``report.equity_curve``（全量，未降采样）——不二次跑引擎、不重拉数据、
-    不改变 run 记录语义。holdout 段衰减比 = holdout_sharpe / train_sharpe，是
-    "这套参数是不是只在前半窗有效"的最便宜信号。
-
-    **不是盲 OOS**：调用方（agent）看得到 holdout 指标，反复对着它调参会间接
-    过拟合；纪律约束在 orchestrator prompt（调参看 train，holdout 只作裁判）。
-
-    Returns:
-        曲线 < 10 点或任一段 < 2 点（切不出有意义的段）时返 ``None``。
-    """
-    curve: list[tuple[int, float]] = report.equity_curve
-    if len(curve) < 10:
-        return None
-    split_idx = int(len(curve) * split)
-    if split_idx < 2 or len(curve) - split_idx < 2:
-        return None
-
-    cut_ts_ns = curve[split_idx][0]
-    values = [eq for _ts, eq in curve]
-    train_vals = values[:split_idx]
-    # holdout 段带上切点前一根作收益率基准（首根 holdout return 需要前值）
-    holdout_vals = values[split_idx - 1 :]
-
-    fills = list(getattr(report, "fills", []) or [])
-    train_fills = sum(1 for f in fills if f.ts_ns < cut_ts_ns)
-    holdout_fills = len(fills) - train_fills
-
-    def _segment(
-        vals: list[float], num_trades: int, *, bar_count: int | None = None
-    ) -> ValidationSegment:
-        rets = bar_returns(vals)
-        return ValidationSegment(
-            sharpe=sharpe_ratio(rets, int(bars_per_year)),
-            total_return_pct=(vals[-1] / vals[0] - 1.0) * 100.0 if vals[0] > 0 else 0.0,
-            max_drawdown_pct=max_drawdown_pct(vals),
-            num_trades=num_trades,
-            num_bars=bar_count if bar_count is not None else len(vals),
-        )
-
-    train_seg = _segment(train_vals, train_fills)
-    # holdout_vals 多带切点前一根作收益率基准 → num_bars 报真实 holdout 段长（len-1），
-    # 否则 insufficient_sample 的 <30 判据在真实 29 根时被 +1 顶到 30 漏报（CR #86）。
-    holdout_seg = _segment(
-        holdout_vals, holdout_fills, bar_count=len(holdout_vals) - 1
-    )
-
-    flags: list[str] = []
-    # holdout 段自身要有足够样本：用 holdout_seg.num_trades 而非全窗口 report.num_trades
-    # ——策略可能 train 段交易密集、holdout 段几乎不动，全窗口 ≥5 却 holdout 只 1-2 笔，
-    # 此时 holdout Sharpe / decay_ratio 不可信，必须 flag（CR #86 major）。
-    if (
-        holdout_seg.num_bars < 30
-        or holdout_seg.num_trades < 2
-        or report.num_trades < 5
-    ):
-        flags.append("insufficient_sample")
-
-    decay_ratio: float | None = None
-    if train_seg.sharpe is None or holdout_seg.sharpe is None:
-        flags.append("sharpe_undefined")
-    elif train_seg.sharpe <= 0:
-        # train 段本身就不赚：衰减比无意义（负除负会假装"没衰减"）
-        flags.append("train_sharpe_nonpositive")
-    else:
-        decay_ratio = holdout_seg.sharpe / train_seg.sharpe
-
-    ci_includes_zero: bool | None = None
-    holdout_rets = bar_returns(holdout_vals)
-    if len(holdout_rets) >= 30:
-        try:
-            ci = bootstrap_sharpe_ci(holdout_rets, n_samples=1000)
-            ci_includes_zero = ci.ci_includes_zero
-        except Exception:
-            logger.warning("bootstrap_sharpe_ci failed", exc_info=True)
-
-    return ValidationBlock(
-        split_ratio=split,
-        train=train_seg,
-        holdout=holdout_seg,
-        decay_ratio=decay_ratio,
-        holdout_sharpe_ci_includes_zero=ci_includes_zero,
-        flags=flags,
-    )
-
-
 async def _persist_run(
     *,
     conn: AsyncConnection,
@@ -553,28 +473,6 @@ async def _persist_run(
             },
         )
         return None
-
-
-def _fitness_from_report(report: Any, *, bars_per_year: float) -> float:
-    """从 ``BacktestReport`` 算多目标 fitness（D-9 · ADR-0020 §适应度函数）。
-
-    抽出公用函数避免主路径 / baseline 路径重复算 calmar + compose_fitness。
-    """
-    calmar = calmar_from_report(
-        total_return_pct=report.total_return_pct,
-        max_drawdown_pct=report.max_drawdown_pct,
-        num_bars_processed=report.num_bars_processed,
-        bars_per_year=bars_per_year,
-    )
-    return compose_fitness(
-        FitnessInputs(
-            sharpe=report.sharpe,
-            calmar=calmar,
-            max_drawdown_pct=report.max_drawdown_pct,
-            num_trades=report.num_trades,
-            num_bars_processed=report.num_bars_processed,
-        )
-    )
 
 
 async def run_cv(
@@ -789,6 +687,7 @@ async def _run_engine(
     trading_mode: str = "spot",
     leverage: int = 1,
     funding_rate: float = 0.0,
+    annualization_periods: int | None = None,
 ) -> BacktestReport:
     """调度 engine 执行：pool 已起则丢 ProcessPool，未起则同进程跑兜底。
 
@@ -824,6 +723,7 @@ async def _run_engine(
             trading_mode=trading_mode,
             leverage=leverage,
             funding_rate=funding_rate,
+            annualization_periods=annualization_periods,
         )
 
     loop = asyncio.get_running_loop()
@@ -846,6 +746,7 @@ async def _run_engine(
         trading_mode=trading_mode,
         leverage=leverage,
         funding_rate=funding_rate,
+        annualization_periods=annualization_periods,
     )
     return await loop.run_in_executor(pool, fn)
 
@@ -883,6 +784,7 @@ def _make_pool_call(
     trading_mode: str = "spot",
     leverage: int = 1,
     funding_rate: float = 0.0,
+    annualization_periods: int | None = None,
 ) -> Any:
     """生成一个无参 callable，丢给 ``run_in_executor``。
 
@@ -909,126 +811,5 @@ def _make_pool_call(
         trading_mode=trading_mode,
         leverage=leverage,
         funding_rate=funding_rate,
-    )
-
-
-def run_engine_in_subprocess(
-    *,
-    bars: list[Bar],
-    instrument_id: InstrumentId,
-    timeframe: str,
-    strategy_id: str | None,
-    params: dict[str, Any],
-    initial_cash: float,
-    fee_rate: float,
-    candidate_code: str | None = None,
-    protective_stop_loss_pct: float | None = None,
-    protective_take_profit_pct: float | None = None,
-    protective_trailing_stop_pct: float | None = None,
-    protective_chandelier_atr_mult: float | None = None,
-    protective_chandelier_atr_period: int = 22,
-    trading_mode: str = "spot",
-    leverage: int = 1,
-    funding_rate: float = 0.0,
-) -> BacktestReport:
-    """**Top-level 函数 = 可 pickle**：实例化 engine + strategy + 跑 bars，返 ``BacktestReport``。
-
-    在子进程里跑（ADR-0025 §D1）：
-
-    - 不调任何 async / httpx / DB —— 全部 IO 留在 main 协程
-    - 只接受 picklable 输入（dataclass + 原生 dict / list）
-    - raise 直接通过 future 传回 main，main 翻成 HTTP 5xx 结构化错误
-    - rlimit / CPU 超时由 ``engine.pool._worker_init`` 在 worker 启动时设置
-
-    放在 runner.py 而不是 pool.py：保持调用现场的 import 上下文（``BacktestEngine`` 之类
-    模块在 worker 第一次 fork 后由 pickle 反序列化时按需 import）。
-
-    D-9 · candidate 分支：
-    - ``candidate_code`` 非空 → ``dynamic_loader`` + ``verify_strategy_contract`` 在子进程内跑
-      （main 进程已审过；这里只走 load + contract，避免再次 AST 浪费 CPU）
-    - 否则走内置 ``get_strategy_class(strategy_id)``
-    """
-    # ADR-0052：框架级持仓保护止损阈值由 main 进程从 Settings 解析后传入（子进程不读
-    # Settings 单例，保持 picklable + 纯）。三阈值全 None → BacktestEngine 不建 guard。
-    engine = BacktestEngine(
-        initial_cash=initial_cash,
-        fee_rate=fee_rate,
-        protective_stop_loss_pct=protective_stop_loss_pct,
-        protective_take_profit_pct=protective_take_profit_pct,
-        protective_trailing_stop_pct=protective_trailing_stop_pct,
-        protective_chandelier_atr_mult=protective_chandelier_atr_mult,
-        protective_chandelier_atr_period=protective_chandelier_atr_period,
-        trading_mode=trading_mode,
-        leverage=leverage,
-        funding_rate=funding_rate,
-    )
-
-    if candidate_code is not None:
-        strategy_cls = load_strategy_class(candidate_code)
-        verify_strategy_contract(strategy_cls)
-        strategy_name = f"{strategy_cls.__name__}-{instrument_id.symbol}"
-    else:
-        if strategy_id is None:
-            raise ValidationError(
-                "internal: neither strategy_id nor candidate_code provided",
-                code="STRATEGY_MISSING",
-            )
-        strategy_cls = get_strategy_class(strategy_id)
-        strategy_name = f"{strategy_id}-{instrument_id.symbol}"
-
-    # strategy 子类构造签名不一（SMA cross 要 lookback、mean_rev 要 threshold 等）；
-    # MVP 不抽 strategy factory，**kwargs 喂参数 + type:ignore
-    # 自动注入 initial_cash：strategy `__init__` 接受这个字段（sma_cross /
-    # mean_reversion 的 position_pct 路径）就传；不接受的老 strategy 不传。
-    strategy_kwargs: dict[str, Any] = dict(params)
-    try:
-        sig = inspect.signature(strategy_cls.__init__)
-        if "initial_cash" in sig.parameters and "initial_cash" not in strategy_kwargs:
-            strategy_kwargs["initial_cash"] = initial_cash
-    except (TypeError, ValueError):
-        pass
-    try:
-        sig = inspect.signature(strategy_cls.__init__)
-        if "position_pct" in sig.parameters and "position_pct" not in strategy_kwargs:
-            strategy_kwargs["position_pct"] = 1.0
-    except (TypeError, ValueError):
-        pass
-    strategy = strategy_cls(  # type: ignore[call-arg]
-        name=strategy_name,
-        clock=engine.clock,
-        msgbus=engine.msgbus,
-        instrument_id=instrument_id,
-        timeframe=timeframe,
-        **strategy_kwargs,
-    )
-    engine.add_strategy(strategy)
-    return engine.run(bars)
-
-
-# datetime → ns 整数转换已上移 kernel.clock.datetime_to_ns(report.py 也要用,
-# 留在 runner 会形成 engine → runner 反向依赖)。
-
-
-def _bar_from_dict(d: dict[str, Any], instrument_id: InstrumentId, timeframe: str) -> Bar:
-    """data-service ``BarResponse`` dict → 内核 ``Bar`` dataclass。"""
-    # ts 字段 data-service 返 ISO datetime 字符串
-    ts_str = d["ts"]
-    if isinstance(ts_str, str):
-        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-    else:
-        dt = ts_str
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    ts_ns = datetime_to_ns(dt)
-
-    return Bar(
-        instrument_id=instrument_id,
-        timeframe=timeframe,
-        open=float(d["open"]),
-        high=float(d["high"]),
-        low=float(d["low"]),
-        close=float(d["close"]),
-        volume=float(d["volume"]),
-        ts_event=ts_ns,
-        ts_init=ts_ns,
+        annualization_periods=annualization_periods,
     )

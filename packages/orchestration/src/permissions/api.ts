@@ -25,21 +25,27 @@ interface ApiRouteSpec {
   handler: Handler;
 }
 
+function getAuthSub(c: Context): string | undefined {
+  const requestContext = c.get("requestContext") as
+    | { get?: (key: string) => unknown }
+    | undefined;
+  const value =
+    typeof requestContext?.get === "function" ? requestContext.get(AUTH_SUB_KEY) : undefined;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 const listPending: Handler = (c: Context) => {
-  return c.json({ pending: pendingApprovals.list() });
+  const authSub = getAuthSub(c);
+  if (!authSub) return c.json({ error: "unauthorized" }, 401);
+  return c.json({ pending: pendingApprovals.list(authSub) });
 };
 
 const listApprovalHistory: Handler = async (c: Context) => {
+  const authSub = getAuthSub(c);
+  if (!authSub) return c.json({ error: "unauthorized" }, 401);
   const rawLimit = Number(c.req.query("limit") ?? "50");
   const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
   try {
-    // 从 requestContext 取已认证主体 sub（#91 身份注入 middleware 写入的）。
-    // 有 sub → 按用户过滤；无 sub（本地 dev 无 Bearer token / token 无 sub）→ 返回全部。
-    const rc = c.get("requestContext") as { get?: (k: string) => unknown } | undefined;
-    const authSub =
-      typeof rc?.get === "function"
-        ? (rc.get(AUTH_SUB_KEY) as string | undefined)
-        : undefined;
     return c.json({ history: await listHistory(authSub, limit) });
   } catch (err) {
     console.error("[permissions] listHistory 失败:", err);
@@ -69,7 +75,9 @@ const respondPending: Handler = async (c: Context) => {
       400,
     );
   }
-  const ok = pendingApprovals.respond(id, decision);
+  const authSub = getAuthSub(c);
+  if (!authSub) return c.json({ error: "unauthorized" }, 401);
+  const ok = pendingApprovals.respond(id, decision, authSub);
   if (!ok) {
     return c.json({ error: "not_found_or_expired", requestId: id }, 404);
   }

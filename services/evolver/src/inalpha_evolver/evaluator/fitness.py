@@ -4,14 +4,12 @@ E1 不重新实现 fitness 公式，直接调用 paper 已有函数，确保评�
 """
 from __future__ import annotations
 
-from inalpha_paper.engine.metrics import periods_per_year
 from inalpha_paper.strategy_authoring.fitness import (
     FitnessInputs,
     compose_fitness,
 )
 
 from ..exceptions import EvaluationError
-from ..population import EvaluationResult
 
 
 def compute_fitness_from_report(report: dict, timeframe: str = "1h") -> float:

@@ -171,6 +171,27 @@ async def get_candidate(
     return _row_to_dict(row) if row else None
 
 
+async def get_owned_candidate(
+    conn: AsyncConnection,
+    candidate_id: UUID,
+    owner_account_id: UUID,
+) -> dict[str, Any] | None:
+    """按 candidate 与 owner 原子取完整行；跨 owner 与不存在均返 None。"""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT id, code, code_hash, description, author, author_id,
+                   owner_account_id, status, metrics, fitness, last_backtest_run_id,
+                   audit, factor_snapshot, created_at, updated_at
+            FROM strategy_candidates
+            WHERE id = %s AND owner_account_id = %s
+            """,
+            (str(candidate_id), str(owner_account_id)),
+        )
+        row = await cur.fetchone()
+    return _row_to_dict(row) if row else None
+
+
 async def list_candidates(
     conn: AsyncConnection,
     *,

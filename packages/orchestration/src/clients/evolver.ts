@@ -1,51 +1,65 @@
-/**
- * services/evolver 客户端 —— 策略演化引擎。
- *
- * 封装 evolver 服务（`POST /api/v1/runs` / `GET /api/v1/runs/{run_id}` / `GET /api/v1/candidates/{candidate_id}`）。
- */
+/** services/evolver 的 owner-scoped API 客户端。 */
+import { createHash, randomUUID } from "node:crypto";
+
 import { HttpClient } from "./http.js";
 
-/** 演化运行配置（与 evolver API schema 对齐）。 */
 export type EvolutionConfig = {
-  universe?: string[];
-  period_from?: string;
-  period_to?: string;
-  timeframe?: string;
+  venue: string;
+  symbol: string;
+  timeframe: string;
+  from_ts: string;
+  as_of: string;
   initial_cash?: number;
+  fee_rate?: number;
+  validation_split?: number;
 };
 
-/** 候选策略响应（与 evolver API CandidateResponse 对齐）。 */
 export type CandidateResult = {
   candidate_id: string;
   run_id: string;
+  slot: number;
   generation: number;
-  parent_id: string | null;
-  source_code: string;
-  source_hash: string;
+  stage: string;
+  outcome: string;
+  source_code: string | null;
+  source_hash: string | null;
+  unified_diff: string | null;
   mutation_hint: string | null;
+  llm_cost_usd: number | null;
   fitness: number | null;
-  report: Record<string, unknown> | null;
+  evaluation_snapshot: Record<string, unknown> | null;
+  audit_snapshot: Record<string, unknown> | null;
+  contract_snapshot: Record<string, unknown> | null;
+  error_code: string | null;
+  error_message: string | null;
   overfitting_risk: string;
-  status: string;
   created_at: string | null;
+  updated_at: string | null;
 };
 
-/** 运行状态响应（与 evolver API RunStatusResponse 对齐）。 */
 export type RunStatusResult = {
   run_id: string;
   seed_strategy_id: string;
   budget: number;
-  config: Record<string, unknown> | null;
-  status: string;
+  config: Record<string, unknown>;
+  status: "queued" | "running" | "cancelling" | "completed" | "failed" | "aborted";
+  active_stage: string | null;
   llm_cost_usd: number;
-  candidates_count: number;
-  rejected_ast: number;
-  rejected_contract: number;
-  failed_eval: number;
+  queued_at: string;
   started_at: string | null;
   finished_at: string | null;
+  dataset_manifest: Record<string, unknown> | null;
+  seed_report_snapshot: Record<string, unknown> | null;
+  baseline_snapshot: Record<string, unknown> | null;
+  failure_code: string | null;
+  failure_message: string | null;
+  attempted: number;
+  succeeded: number;
+  rejected: number;
   candidates: CandidateResult[];
 };
+
+export type RunListResult = { items: RunStatusResult[]; next_cursor: string | null };
 
 export class EvolverClient {
   private readonly http: HttpClient;
@@ -54,43 +68,41 @@ export class EvolverClient {
     this.http = new HttpClient(options);
   }
 
-  /**
-   * 启动一次演化运行。
-   *
-   * @param budget 变异预算数（候选数量，默认 4）
-   * @param seedStrategyId 种子策略 ID（默认 "sma_cross_v1"）
-   * @param config 演化配置（universe, period, timeframe, initial_cash）
-   * @returns 运行状态（含 run_id 用于后续轮询）
-   */
-  async startRun(
-    budget?: number,
-    seedStrategyId?: string,
-    config?: EvolutionConfig,
-  ): Promise<RunStatusResult> {
-    return await this.http.post<RunStatusResult>("/api/v1/runs", {
-      budget: budget ?? 4,
-      seed_strategy_id: seedStrategyId ?? "sma_cross_v1",
-      config: config ?? undefined,
+  async startRun(options: {
+    budget?: number;
+    seedStrategyId?: string;
+    config: EvolutionConfig;
+    idempotencyKey?: string;
+  }): Promise<RunStatusResult> {
+    const body = {
+      budget: options.budget ?? 4,
+      seed_strategy_id: options.seedStrategyId ?? "sma_cross_v1",
+      config: options.config,
+    };
+    const key = options.idempotencyKey ?? operationKey(body);
+    return await this.http.post<RunStatusResult>("/api/v1/runs", body, {
+      "Idempotency-Key": key,
     });
   }
 
-  /**
-   * 查询演化运行状态。
-   *
-   * @param runId 运行 UUID
-   * @returns 运行状态（含候选列表，按 fitness 降序）
-   */
+  async listRuns(limit = 20): Promise<RunListResult> {
+    return await this.http.get<RunListResult>("/api/v1/runs", { limit });
+  }
+
   async getRun(runId: string): Promise<RunStatusResult> {
     return await this.http.get<RunStatusResult>(`/api/v1/runs/${runId}`);
   }
 
-  /**
-   * 查询单个候选策略详情。
-   *
-   * @param candidateId 候选 UUID
-   * @returns 候选信息（含源码 + 报告 + fitness）
-   */
   async getCandidate(candidateId: string): Promise<CandidateResult> {
     return await this.http.get<CandidateResult>(`/api/v1/candidates/${candidateId}`);
   }
+
+  async abortRun(runId: string): Promise<RunStatusResult> {
+    return await this.http.post<RunStatusResult>(`/api/v1/runs/${runId}/abort`, {});
+  }
+}
+
+function operationKey(body: unknown): string {
+  const digest = createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 24);
+  return `tool-${digest}-${randomUUID().slice(0, 8)}`;
 }

@@ -1,0 +1,21 @@
+# syntax=docker/dockerfile:1
+# Evolver 依赖 paper 评估 seam 与两层 shared 包，需保留源码相对路径。
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+WORKDIR /app
+RUN useradd --create-home --uid 10001 app && chown app:app /app
+USER app
+
+COPY --chown=app:app _shared/pyproject.toml _shared/uv.lock ./_shared/
+COPY --chown=app:app _shared/llm/pyproject.toml ./_shared/llm/
+COPY --chown=app:app paper/pyproject.toml paper/uv.lock ./paper/
+COPY --chown=app:app evolver/pyproject.toml evolver/uv.lock ./evolver/
+COPY --chown=app:app _shared ./_shared
+COPY --chown=app:app paper ./paper
+COPY --chown=app:app evolver ./evolver
+
+WORKDIR /app/evolver
+RUN uv sync --frozen --no-dev
+
+ENV PYTHONUNBUFFERED=1
+CMD ["sh", "-c", "uv run uvicorn inalpha_evolver.main:app --host 0.0.0.0 --port ${PORT:-8005} --workers 1"]

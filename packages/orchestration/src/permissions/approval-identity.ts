@@ -56,6 +56,8 @@ export const APPROVAL_IDENTITY_FIELDS: Readonly<Record<string, readonly string[]
     "leverage",
     "allocation",
   ],
+  // 演化审批绑定完整计算范围；idempotencyKey 只是传输重试标识，不改变成本或行为。
+  "evolver.run_evolution": ["seedStrategyId", "budget", "config"],
 };
 
 /**

@@ -20,6 +20,9 @@ services:
   factor:
     container_name: inalpha-selfhost-factor
     build: {context: ../services, dockerfile: ../infra/docker/Dockerfile.python, args: {SERVICE: factor}}
+  evolver:
+    container_name: inalpha-selfhost-evolver
+    build: {context: ../services, dockerfile: ../infra/docker/Dockerfile.evolver}
   mastra:
     container_name: inalpha-selfhost-mastra
     build: {context: ../packages/orchestration, dockerfile: ../../infra/docker/Dockerfile.mastra}

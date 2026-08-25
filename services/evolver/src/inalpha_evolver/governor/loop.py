@@ -5,14 +5,20 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from uuid import UUID
 
 from ..evaluator import Evaluator, MockEvaluator
-from ..exceptions import DiffApplyError, EvaluationError, EvaluationTimeoutError, LLMError, SandboxError
+from ..exceptions import (
+    DiffApplyError,
+    EvaluationError,
+    EvaluationTimeoutError,
+    LLMError,
+    SandboxError,
+)
 from ..mutator import Mutator
 from ..mutator.mock_client import MockMutator
-from ..population import Candidate, EvolutionRun
+from ..population import EvolutionRun
 from ..sandbox import assert_safe, assert_strategy_subclass
 from .hint_generator import HintGenerator
 from .seed import SEED_STRATEGY_CODE
@@ -58,7 +64,7 @@ async def run_one_generation(
         seed_strategy_id="sma_cross_v1",
         budget=budget,
         config=cfg,
-        started_at=datetime.now(timezone.utc),
+        started_at=datetime.now(UTC),
     )
 
     # 先评估种子策略（baseline）
@@ -75,7 +81,7 @@ async def run_one_generation(
     except (EvaluationError, EvaluationTimeoutError) as exc:
         logger.error("种子策略评估失败：%s", exc)
         run.status = "failed"
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = datetime.now(UTC)
         return run
 
     seed_report = seed_eval.report
@@ -141,31 +147,12 @@ async def run_one_generation(
             run.failed_eval += 1
             continue
 
-        # 5. 构建候选记录
-        candidate = Candidate(
-            candidate_id=uuid4(),
-            run_id=run_id,
-            generation=1,
-            parent_id=None,
-            source_code=mut_res.new_source,
-            source_hash=mut_res.source_hash,
-            unified_diff=mut_res.unified_diff,
-            mutation_hint=hint,
-            llm_cost_usd=mut_res.llm_cost_usd,
-            cache_hit_tokens=mut_res.cache_hit_tokens,
-            fitness=eval_res.fitness,
-            report=eval_res.report,
-            overfitting_risk=eval_res.overfitting_risk,
-            data_epoch=eval_res.data_epoch,
-            created_at=datetime.now(timezone.utc),
-        )
-
         run.candidates_count += 1
         logger.info("候选 %d 评估完成：fitness=%.4f", i + 1, eval_res.fitness)
 
     # 更新运行状态
     run.status = "completed"
-    run.finished_at = datetime.now(timezone.utc)
+    run.finished_at = datetime.now(UTC)
 
     logger.info(
         "演化轮次完成：total=%d, ast_rejected=%d, contract_rejected=%d, "

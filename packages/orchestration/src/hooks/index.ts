@@ -12,7 +12,13 @@ export type {
 
 export { HookRunner } from "./runner.js";
 export { toolMatches } from "./matcher.js";
-export { withHooks, defaultGetSessionId, AUTH_SUB_KEY } from "./with-hooks.js";
+export {
+  withHooks,
+  defaultGetAuthSub,
+  defaultGetSessionId,
+  defaultGetTurnId,
+  AUTH_SUB_KEY,
+} from "./with-hooks.js";
 export type { PermissionResolver, WithHooksOptions } from "./with-hooks.js";
 
 export { createAuditLogHandler, defaultAuditRegistration } from "./handlers/audit-log.js";
@@ -69,12 +75,6 @@ export type {
   LastResearchFetcher,
   AnalystQuorumCheckOptions,
 } from "./handlers/analyst-quorum-check.js";
-
-export {
-  createEvolutionOnPromoteHandler,
-  defaultEvolutionOnPromoteRegistration,
-} from "./handlers/evolution-on-promote.js";
-export type { EvolutionOnPromoteOptions } from "./handlers/evolution-on-promote.js";
 
 export { StopHookRunner, formatStopNotice } from "./stop-runner.js";
 export type { StopDecision } from "./stop-runner.js";

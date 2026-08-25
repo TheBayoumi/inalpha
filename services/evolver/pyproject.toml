@@ -6,6 +6,8 @@ license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     "inalpha-paper",
+    "inalpha-shared",
+    "inalpha-shared-llm",
     "fastapi>=0.136.0",
     "uvicorn>=0.34.0",
     "pydantic>=2.13.0",
@@ -22,6 +24,11 @@ dev = [
     "ruff>=0.15.0",
     "mypy>=2.1.0",
 ]
+
+[tool.uv.sources]
+inalpha-paper = { path = "../paper", editable = true }
+inalpha-shared = { path = "../_shared", editable = true }
+inalpha-shared-llm = { path = "../_shared/llm", editable = true }
 
 [build-system]
 requires = ["hatchling"]

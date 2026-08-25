@@ -4,33 +4,48 @@
 
     uvicorn inalpha_evolver.main:app --port 8005 --reload
 """
+
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from inalpha_shared.db import close_pool, init_pool
+from inalpha_shared.middleware import install_error_handler, install_request_logging
 
 from .api.routes import router
 from .config import get_evolver_settings
+from .mutator import Mutator
+from .runtime import EvolutionRunManager
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """服务生命周期管理。
-
-    E1 暂不连接 DB（使用内存存储）。E2 启 DB pool + LLM client。
-    """
+    """初始化 DB 队列与 manager；E1 强制单 API worker。"""
     settings = get_evolver_settings()
-    logger.info(
-        "Evolver 服务启动 (model=%s, timeout=%ds)",
-        settings.llm_model,
-        settings.evolver_job_timeout_s,
+    workers = int(os.environ.get("WEB_CONCURRENCY", os.environ.get("WORKERS", "1")))
+    if workers != 1:
+        raise RuntimeError("evolver requires exactly one API worker in E1")
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL is required for evolver")
+    await init_pool(
+        settings.database_url,
+        min_size=2,
+        max_size=settings.evolver_pool_size,
     )
-    yield
-    logger.info("Evolver 服务关闭")
+    manager = EvolutionRunManager(mutator=Mutator(), settings=settings)
+    app.state.evolution_manager = manager
+    await manager.start()
+    try:
+        yield
+    finally:
+        await manager.close()
+        await close_pool()
 
 
 app = FastAPI(
@@ -41,8 +56,21 @@ app = FastAPI(
 )
 
 app.include_router(router)
+install_request_logging(app)
+install_error_handler(app)
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
+@app.get("/health", response_model=None)
+async def health(request: Request) -> dict[str, str] | JSONResponse:
+    manager = getattr(request.app.state, "evolution_manager", None)
+    if manager is None or not manager.healthy:
+        reason = getattr(manager, "unhealthy_reason", None) or "dispatcher unavailable"
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "service": "inalpha-evolver",
+                "reason": reason,
+            },
+        )
     return {"status": "ok", "service": "inalpha-evolver"}

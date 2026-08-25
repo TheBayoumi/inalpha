@@ -60,6 +60,7 @@ class BacktestEngine:
         trading_mode: str = "spot",
         leverage: int = 1,
         funding_rate: float = 0.0,
+        annualization_periods: int | None = None,
     ) -> None:
         """初始化。
 
@@ -102,6 +103,7 @@ class BacktestEngine:
         # funding 序列见 data.fetch_perp_funding_rate(后续把逐根真 rate 喂进来)。
         self._trading_mode = trading_mode
         self._funding_rate = funding_rate
+        self._annualization_periods = annualization_periods
         # spot 守门：让 SimulatedExchange 撮合前能 query portfolio cash / position
         # （ADR-0032 BuyingPowerRule 撮合层兜底实现，旧 BTC -98% bug 同源防御）
         self.exchange.bind_portfolio(self.portfolio)
@@ -216,6 +218,7 @@ class BacktestEngine:
             period_start=_ts_to_dt(bars[0].ts_event) if bars else None,
             period_end=_ts_to_dt(bars[-1].ts_event) if bars else None,
             timeframe=timeframe,
+            annualization_periods=self._annualization_periods,
         )
 
 

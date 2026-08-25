@@ -497,6 +497,9 @@
         "risk": "Risk panel",
         "activity": "Agent log",
         "divination": "Divination",
+        "evolution_list": "Strategy evolution",
+        "evolution_run_detail": "Evolution run",
+        "evolution_candidate_detail": "Evolution candidate",
         "overview": "Overview"
       }
     }
@@ -540,8 +543,8 @@
     "truncated": "Showing the latest {n} — earlier ones aren't listed here.",
     "filter": {
       "all": "All",
-      "done": "Done",
-      "running": "Running"
+      "terminal": "Finished",
+      "active": "Active"
     },
     "col": {
       "run": "Run",
@@ -552,7 +555,50 @@
       "rejected": "Blocked",
       "cost": "Cost",
       "time": "Time"
-    }
+    },
+    "detail": {
+      "back": "Back to evolution",
+      "title": "Evolution Run",
+      "abort": "Abort run",
+      "abortTitle": "Abort this evolution run?",
+      "abortDescription": "The current stage will be cancelled and no further slots will run. LLM costs already incurred cannot be reversed.",
+      "cancel": "Cancel",
+      "confirmAbort": "Abort run",
+      "aborting": "Aborting…",
+      "candidates": "Candidate slots",
+      "summary": "Run summary",
+      "stage": "Stage",
+      "attempts": "Attempts",
+      "succeeded": "Succeeded",
+      "rejected": "Blocked",
+      "cost": "Cost",
+      "failure": "Failure code",
+      "dataset": "Frozen dataset",
+      "seedReport": "Seed report",
+      "baseline": "Market baseline",
+      "notAvailable": "Not available yet",
+      "noCandidates": "No slots have been created yet.",
+      "slot": "Slot",
+      "outcome": "Outcome",
+      "fitness": "Fitness"
+    },
+    "candidate": {
+      "back": "Back to evolution run",
+      "title": "Candidate #{slot}",
+      "error": "Rejection / failure",
+      "stage": "Stage",
+      "fitness": "Fitness",
+      "risk": "Overfitting risk",
+      "cost": "Cost",
+      "diff": "Unified diff",
+      "source": "Strategy source",
+      "evaluation": "Evaluation snapshot",
+      "copy": "Copy",
+      "copied": "Copied",
+      "notAvailable": "Not available yet"
+    },
+    "loadMore": "Load more",
+    "loadingMore": "Loading…"
   },
   "backtests": {
     "back": "Agent Activity",

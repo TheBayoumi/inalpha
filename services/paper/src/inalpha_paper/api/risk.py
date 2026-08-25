@@ -27,6 +27,7 @@ from inalpha_shared.auth import User, get_current_user
 from inalpha_shared.db import DBConn
 from pydantic import BaseModel, Field
 
+from ..account_id import account_id_from_user
 from ..execution.risk_rules import (
     ClosedTradeRecord,
     RiskRulesConfig,
@@ -163,14 +164,14 @@ async def list_rules(
 
 @router.get("/locks", response_model=LocksListResponse)
 async def list_locks(
-    _user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     conn: DBConn,
     scope: str | None = None,
     market: str | None = None,
     symbol: str | None = None,
     limit: int = 100,
 ) -> LocksListResponse:
-    """列 PostgreSQL `risk_locks` 中 `now` 仍生效的锁。"""
+    """列 PostgreSQL `risk_locks` 中 `now` 仍生效的锁（按账户隔离）。"""
     # 与 /locks/history 对称:防 ?limit=999999 直接 LIMIT 全表扫。
     bounded = max(1, min(limit, 200))
     rows: list[dict[str, Any]] = await locks_store.list_active(
@@ -179,6 +180,7 @@ async def list_locks(
         scope=scope,
         market=market,
         symbol=symbol,
+        account_id=str(account_id_from_user(user)),
         limit=bounded,
     )
     return LocksListResponse(locks=[LockResponse.model_validate(r) for r in rows])
@@ -186,17 +188,19 @@ async def list_locks(
 
 @router.get("/locks/history", response_model=RecentLocksListResponse)
 async def list_locks_history(
-    _user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user)],
     conn: DBConn,
     limit: int = 50,
 ) -> RecentLocksListResponse:
-    """列**最近**风控锁（含已过期 / 已解锁），按 ``locked_at`` DESC。
+    """列**最近**风控锁（含已过期 / 已解锁），按 ``locked_at`` DESC（按账户隔离）。
 
     风控锁多为短时效（如 CooldownRule 5min），``/locks`` 只看 active 会让「刚触发过
     风控」过期即不可查。本端点给 UI / 审计一个事后复盘的历史视图。
     """
     bounded = max(1, min(limit, 200))
-    rows: list[dict[str, Any]] = await locks_store.list_recent(conn, limit=bounded)
+    rows: list[dict[str, Any]] = await locks_store.list_recent(
+        conn, account_id=str(account_id_from_user(user)), limit=bounded
+    )
     return RecentLocksListResponse(
         locks=[RecentLockResponse.model_validate(r) for r in rows]
     )
@@ -209,9 +213,13 @@ async def unlock(
     user: Annotated[User, Depends(get_current_user)],
     conn: DBConn,
 ) -> dict[str, bool]:
-    """人工解锁。`unlocked_by = user.sub`，软删（active=FALSE）。"""
+    """人工解锁。`unlocked_by = user.sub`，软删（active=FALSE）。仅限本账户的锁。"""
     ok = await locks_store.manual_unlock(
-        conn, lock_id, unlocked_by=user.user_id, unlock_reason=body.reason
+        conn,
+        lock_id,
+        unlocked_by=user.user_id,
+        unlock_reason=body.reason,
+        account_id=str(account_id_from_user(user)),
     )
     if not ok:
         raise HTTPException(

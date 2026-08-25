@@ -14,7 +14,9 @@ import {
   createGridSizeCapHandler,
   createToolIdempotencyHandlers,
   defaultAuditRegistration,
+  defaultGetAuthSub,
   defaultGetSessionId,
+  defaultGetTurnId,
   defaultGridSizeCapRegistration,
   defaultIdempotencyRegistrations,
   toolMatches,
@@ -318,162 +320,59 @@ describe("withHooks", () => {
     expect(out.deniedBy).toBe("permission");
   });
 
-  it("ask 第一次调 → 返 requiresApproval + 不调 execute (D-9.1b session cache)", async () => {
+  it("ask 仅在 owner 显式批准后执行一次", async () => {
     const { PendingApprovalsStore } = await import("../src/permissions/pending.js");
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
     const store = new PendingApprovalsStore();
-    const cache = new AskApprovalCache(5_000);
-    const runner = new HookRunner();
-    const exec = vi.fn();
-    const tool = { id: "test.tool", description: "", execute: exec };
-    const wrapped = withHooks(tool, {
-      runner,
-      permissionResolver: () => "ask",
-      pendingApprovals: store,
-      askCache: cache,
-    });
-
-    const out = (await wrapped.execute!({ x: 1 })) as {
-      isError: boolean;
-      deniedBy: string;
-      requiresApproval: boolean;
-      toolName: string;
-      toolInput: unknown;
-      message: string;
-    };
-
-    expect(exec).not.toHaveBeenCalled();
-    expect(out.isError).toBe(true);
-    expect(out.deniedBy).toBe("permission-ask");
-    expect(out.requiresApproval).toBe(true);
-    expect(out.toolName).toBe("test.tool");
-    expect(out.toolInput).toEqual({ x: 1 });
-    expect(out.message).toContain("test.tool");
-    // message 不锁中文 / 英文（CLAUDE.md §3 用户语言原则）
-    expect(out.message).toMatch(/user's language|user language|their .* language/i);
-    // 第一次调后 cache 应该有标记
-    expect(cache.size()).toBe(1);
-    store.clearAll();
-    cache.clear();
-  });
-
-  it("ask 第二次调（同 input）→ cache 命中 → 放行调 execute (session bypass)", async () => {
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
-    const cache = new AskApprovalCache(5_000);
     const runner = new HookRunner();
     const exec = vi.fn().mockResolvedValue({ ran: true });
-    const tool = { id: "test.tool", execute: exec };
-    const wrapped = withHooks(tool, {
-      runner,
-      permissionResolver: () => "ask",
-      askCache: cache,
-    });
-
-    // 第一次调 → 被 ask 拦
-    await wrapped.execute!({ x: 1, y: "abc" });
-    expect(exec).not.toHaveBeenCalled();
-    expect(cache.size()).toBe(1);
-
-    // 第二次调（同 input）→ cache 命中 → 放行
-    const out = await wrapped.execute!({ x: 1, y: "abc" });
-    expect(exec).toHaveBeenCalledOnce();
-    expect(exec).toHaveBeenCalledWith({ x: 1, y: "abc" }, undefined);
-    expect(out).toEqual({ ran: true });
-    // 一次性消费：第二次后 cache 又空了
-    expect(cache.size()).toBe(0);
-  });
-
-  it("ask 第二次调（input 改了）→ cache 不命中 → 再 ask 一次", async () => {
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
-    const cache = new AskApprovalCache(5_000);
-    const runner = new HookRunner();
-    const exec = vi.fn();
-    const tool = { id: "test.tool", execute: exec };
-    const wrapped = withHooks(tool, {
-      runner,
-      permissionResolver: () => "ask",
-      askCache: cache,
-    });
-
-    await wrapped.execute!({ x: 1 });
-    expect(cache.size()).toBe(1);
-
-    // 第二次 input 不一样
-    const out = (await wrapped.execute!({ x: 999 })) as { deniedBy: string };
-    expect(exec).not.toHaveBeenCalled();
-    expect(out.deniedBy).toBe("permission-ask");
-    // 又 mark 了一条新的（首次的还在）→ size=2
-    expect(cache.size()).toBe(2);
-  });
-
-  it("ask 第三次调（同 input）→ 仍要 ask（一次性消费 + 第二次已用掉）", async () => {
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
-    const cache = new AskApprovalCache(5_000);
-    const runner = new HookRunner();
-    const exec = vi.fn().mockResolvedValue({ ok: 1 });
-    const tool = { id: "test.tool", execute: exec };
-    const wrapped = withHooks(tool, {
-      runner,
-      permissionResolver: () => "ask",
-      askCache: cache,
-    });
-
-    await wrapped.execute!({ x: 1 }); // 第 1 次 → ask
-    await wrapped.execute!({ x: 1 }); // 第 2 次 → 放行 + 消费
-    expect(exec).toHaveBeenCalledOnce();
-
-    // 第 3 次：cache 空，又被 ask
-    const out = (await wrapped.execute!({ x: 1 })) as { deniedBy: string };
-    expect(exec).toHaveBeenCalledOnce(); // 没增加
-    expect(out.deniedBy).toBe("permission-ask");
-  });
-
-  it("ask 第一次调也把请求挂进 store (CLI / Web 备用入口)", async () => {
-    const { PendingApprovalsStore } = await import(
-      "../src/permissions/pending.js"
-    );
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
-    const store = new PendingApprovalsStore();
-    const cache = new AskApprovalCache(5_000);
-    const runner = new HookRunner();
-    const tool = { id: "test.tool", execute: vi.fn() };
-    const wrapped = withHooks(tool, {
+    const wrapped = withHooks({ id: "test.tool", execute: exec }, {
       runner,
       permissionResolver: () => "ask",
       pendingApprovals: store,
-      askCache: cache,
-      askTimeoutMs: 5_000,
+      getAuthSub: () => "user:alice",
+      getSessionId: () => "thread-1",
     });
 
-    await wrapped.execute!({ y: 2 });
-    expect(store.size()).toBe(1);
-    const pending = store.list()[0]!;
-    expect(pending.toolName).toBe("test.tool");
-    expect(pending.toolInput).toEqual({ y: 2 });
+    const first = (await wrapped.execute!({ x: 1 })) as {
+      requestId: string;
+      requiresApproval: boolean;
+      message: string;
+    };
+    expect(first.requiresApproval).toBe(true);
+    expect(first.message).toMatch(/latest language/i);
+    expect(exec).not.toHaveBeenCalled();
+    expect(store.list("user:alice")).toHaveLength(1);
+
+    expect(store.respond(first.requestId, "allow", "user:alice")).toBe(true);
+    expect(await wrapped.execute!({ x: 1 })).toEqual({ ran: true });
+    expect(exec).toHaveBeenCalledOnce();
+
+    const replay = (await wrapped.execute!({ x: 1 })) as { requiresApproval: boolean };
+    expect(replay.requiresApproval).toBe(true);
+    expect(exec).toHaveBeenCalledOnce();
     store.clearAll();
   });
 
-  it("ask cache 用 stable key：input key 顺序不同也匹中 (DeepSeek 实测痛点)", async () => {
-    const { AskApprovalCache } = await import("../src/permissions/ask-cache.js");
-    const cache = new AskApprovalCache(5_000);
-    const runner = new HookRunner();
-    const exec = vi.fn().mockResolvedValue({ ok: 1 });
-    const tool = { id: "test.tool", execute: exec };
-    const wrapped = withHooks(tool, {
-      runner,
+  it("ask 批准绑定稳定 input digest", async () => {
+    const { PendingApprovalsStore } = await import("../src/permissions/pending.js");
+    const store = new PendingApprovalsStore();
+    const exec = vi.fn().mockResolvedValue({ ran: true });
+    const wrapped = withHooks({ id: "test.tool", execute: exec }, {
+      runner: new HookRunner(),
       permissionResolver: () => "ask",
-      askCache: cache,
+      pendingApprovals: store,
+      getAuthSub: () => "user:alice",
+      getSessionId: () => "thread-1",
     });
 
-    // 第一次调：key 顺序 {candidateId, reason}
-    await wrapped.execute!({ candidateId: "X", reason: "alpha" });
-    expect(exec).not.toHaveBeenCalled();
+    const first = (await wrapped.execute!({ x: 1 })) as { requestId: string };
+    store.respond(first.requestId, "allow", "user:alice");
 
-    // 第二次调：LLM 把 key 顺序换成 {reason, candidateId} —— stable stringify 仍命中
-    const out = await wrapped.execute!({ reason: "alpha", candidateId: "X" });
-    expect(exec).toHaveBeenCalledOnce();
-    expect(out).toEqual({ ok: 1 });
-    cache.clear();
+    const changed = (await wrapped.execute!({ x: 2 })) as { requiresApproval: boolean };
+    expect(changed.requiresApproval).toBe(true);
+    expect(exec).not.toHaveBeenCalled();
+    expect(await wrapped.execute!({ x: 1 })).toEqual({ ran: true });
+    store.clearAll();
   });
 
   it("hook permissionOverride=allow wins over permissionResolver=deny", async () => {
@@ -683,16 +582,32 @@ describe("audit-log handler", () => {
 // defaultGetSessionId · Mastra runtime context 字段抽取
 // ────────────────────────────────────────────────────────────────────
 
-describe("defaultGetSessionId", () => {
-  it("prefers requestContext authSub — mastra middleware 注入的已认证主体 (#91 多租户 scope)", () => {
-    // RequestContext 是 Map（.get）；authSub 高于 agent.threadId
+describe("defaultGetTurnId", () => {
+  it("只读取每个 user turn 唯一的 runId", () => {
+    expect(defaultGetTurnId({ runId: "turn-1" })).toBe("turn-1");
+    expect(defaultGetTurnId({ runId: "" })).toBeUndefined();
+    expect(defaultGetTurnId({ agent: { threadId: "thread-1" } })).toBeUndefined();
+    expect(defaultGetTurnId(undefined)).toBeUndefined();
+  });
+});
+
+describe("defaultGetAuthSub", () => {
+  it("只读取 identity middleware 注入的已认证主体", () => {
     const rc = new Map<string, unknown>([[AUTH_SUB_KEY, "user-42"]]);
-    expect(defaultGetSessionId({ requestContext: rc, agent: { threadId: "t-1" } })).toBe(
-      "user-42",
-    );
+    expect(defaultGetAuthSub({ requestContext: rc })).toBe("user-42");
+    expect(defaultGetAuthSub({ requestContext: new Map() })).toBeUndefined();
+  });
+});
+
+describe("defaultGetSessionId", () => {
+  it("owner 与稳定 thread 分别提取，不能互相替代", () => {
+    const rc = new Map<string, unknown>([[AUTH_SUB_KEY, "user-42"]]);
+    const ctx = { requestContext: rc, agent: { threadId: "t-1" } };
+    expect(defaultGetAuthSub(ctx)).toBe("user-42");
+    expect(defaultGetSessionId(ctx)).toBe("t-1");
   });
 
-  it("authSub 缺失 → 落回既有优先级（不影响无中间件的路径）", () => {
+  it("authSub 缺失不影响稳定 thread 提取", () => {
     const rc = new Map<string, unknown>();
     expect(defaultGetSessionId({ requestContext: rc, agent: { threadId: "t-1" } })).toBe("t-1");
   });
@@ -701,9 +616,8 @@ describe("defaultGetSessionId", () => {
     expect(defaultGetSessionId({ threadId: "t-1", runId: "r-1" })).toBe("t-1");
   });
 
-  it("does NOT fall back to per-turn runId (dock ask-loop 根因；返回 undefined → askCache 稳定 __global__)", () => {
-    // runId 每 user-turn 变，用它当 askCache key 会让跨 turn 审批永远 miss → 死循环。
-    // 修复后 getSessionId 故意忽略 runId，返回 undefined（askCache 落稳定 __global__）。
+  it("does NOT fall back to per-turn runId", () => {
+    // runId 每 user-turn 变化，不能作为稳定审批 thread；缺失时必须 fail closed。
     expect(defaultGetSessionId({ runId: "r-1" })).toBeUndefined();
   });
 

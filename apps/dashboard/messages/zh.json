@@ -497,6 +497,9 @@
         "risk": "风控面板",
         "activity": "Agent 日志",
         "divination": "占卜台",
+        "evolution_list": "策略演化",
+        "evolution_run_detail": "演化运行",
+        "evolution_candidate_detail": "演化候选",
         "overview": "总览"
       }
     }
@@ -540,8 +543,8 @@
     "truncated": "仅展示最近 {n} 条，更早的记录未列出。",
     "filter": {
       "all": "全部",
-      "done": "已完成",
-      "running": "运行中"
+      "terminal": "已结束",
+      "active": "进行中"
     },
     "col": {
       "run": "运行",
@@ -552,7 +555,50 @@
       "rejected": "阻断",
       "cost": "费用",
       "time": "时间"
-    }
+    },
+    "detail": {
+      "back": "返回演化列表",
+      "title": "演化运行",
+      "abort": "中止运行",
+      "abortTitle": "确认中止演化？",
+      "abortDescription": "当前阶段会被取消，后续 slot 不再执行。已经发生的 LLM 费用不会撤销。",
+      "cancel": "取消",
+      "confirmAbort": "确认中止",
+      "aborting": "正在中止…",
+      "candidates": "候选 slot",
+      "summary": "运行摘要",
+      "stage": "阶段",
+      "attempts": "尝试",
+      "succeeded": "成功",
+      "rejected": "阻断",
+      "cost": "费用",
+      "failure": "失败码",
+      "dataset": "冻结数据集",
+      "seedReport": "种子报告",
+      "baseline": "市场基准",
+      "notAvailable": "尚不可用",
+      "noCandidates": "尚未产生 slot。",
+      "slot": "Slot",
+      "outcome": "结果",
+      "fitness": "适应度"
+    },
+    "candidate": {
+      "back": "返回演化运行",
+      "title": "候选 #{slot}",
+      "error": "拒绝 / 失败原因",
+      "stage": "阶段",
+      "fitness": "适应度",
+      "risk": "过拟合风险",
+      "cost": "费用",
+      "diff": "统一 Diff",
+      "source": "策略源码",
+      "evaluation": "评估快照",
+      "copy": "复制",
+      "copied": "已复制",
+      "notAvailable": "尚不可用"
+    },
+    "loadMore": "加载更多",
+    "loadingMore": "正在加载…"
   },
   "backtests": {
     "back": "Agent 活动",

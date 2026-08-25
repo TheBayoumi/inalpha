@@ -27,6 +27,7 @@ async def insert(
     market: str | None = None,
     symbol: str | None = None,
     side: str = "*",
+    account_id: str | None = None,
 ) -> int:
     """写一行 lock。返回新 id。
 
@@ -35,18 +36,19 @@ async def insert(
         market: scope='market' 必填；scope='symbol' 可选（便于按 market 聚合）
         symbol: scope='symbol' 必填
         side: 'long' / 'short' / '*'
+        account_id: 账户归属（UUID 字符串）；None 表示非账户级（backtest reconcile 路径）
     """
     async with conn.cursor() as cur:
         await cur.execute(
             """
             INSERT INTO risk_locks (
-                scope, market, symbol, side, rule_name, reason, locked_until
+                scope, market, symbol, side, rule_name, reason, locked_until, account_id
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
             RETURNING id
             """,
-            (scope, market, symbol, side, rule_name, reason, locked_until),
+            (scope, market, symbol, side, rule_name, reason, locked_until, account_id),
         )
         row = await cur.fetchone()
     return int(row["id"])  # type: ignore[index]
@@ -59,10 +61,12 @@ async def list_active(
     scope: str | None = None,
     market: str | None = None,
     symbol: str | None = None,
+    account_id: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
     """列出 `now` 时刻仍有效的 lock（active=TRUE 且 locked_until > now）。
 
+    ``account_id`` 提供时按账户过滤（多租户隔离）；None 表示不过滤（测试 / backtest）。
     按 locked_until DESC 排（解锁时间最远的先看）。
     """
     sql = (
@@ -71,6 +75,9 @@ async def list_active(
         "WHERE active = TRUE AND locked_until > %s"
     )
     params: list[Any] = [now]
+    if account_id is not None:
+        sql += " AND account_id = %s"
+        params.append(account_id)
     if scope is not None:
         sql += " AND scope = %s"
         params.append(scope)
@@ -92,6 +99,7 @@ async def list_active(
 async def list_recent(
     conn: AsyncConnection,
     *,
+    account_id: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     """列**最近**的风控锁——含已过期 / 已解锁的行（``active`` 不过滤），按 ``locked_at`` DESC。
@@ -107,15 +115,23 @@ async def list_recent(
     时效过期但 reconciler 尚未跑 ``expire_past_locks`` 的锁，DB 原始 ``active`` 仍是 TRUE，
     原样返回会让历史面板把已过期锁误显为生效中。人工解锁 vs 时效过期由
     ``unlocked_by`` / ``unlock_reason`` 区分，不靠 ``active``。
+
+    ``account_id`` 提供时按账户过滤（多租户隔离）；None 表示不过滤（测试 / backtest）。
     """
     sql = (
         "SELECT id, scope, market, symbol, side, rule_name, reason, "
         "locked_at, locked_until, (active AND locked_until > NOW()) AS active, "
         "unlocked_at, unlocked_by, unlock_reason "
-        "FROM risk_locks ORDER BY locked_at DESC LIMIT %s"
+        "FROM risk_locks"
     )
+    params: list[Any] = []
+    if account_id is not None:
+        sql += " WHERE account_id = %s"
+        params.append(account_id)
+    sql += " ORDER BY locked_at DESC LIMIT %s"
+    params.append(limit)
     async with conn.cursor() as cur:
-        await cur.execute(sql, (limit,))
+        await cur.execute(sql, tuple(params))
         rows = await cur.fetchall()
     return list(rows)  # type: ignore[arg-type]
 
@@ -128,6 +144,7 @@ async def is_locked(
     market: str | None = None,
     symbol: str | None = None,
     side: str = "*",
+    account_id: str | None = None,
 ) -> dict[str, Any] | None:
     """精确查 `now` 时 ``scope`` + ``market``/``symbol`` 是否被锁。
 
@@ -135,6 +152,9 @@ async def is_locked(
     - 锁的 ``side='*'`` 拦任何方向查询
     - 查询的 ``side='*'`` 命中任何方向的锁
     - 否则 long 锁拦 long 查询、short 锁拦 short 查询，不互拦
+
+    ``account_id`` 提供时按账户过滤——跨账户锁互不可见（多租户隔离）；None 表示
+    不过滤（测试 / backtest）。
 
     Returns:
         首个命中锁的 row dict（按 locked_until DESC，最远解锁的先看）；无锁返 ``None``。
@@ -149,6 +169,9 @@ async def is_locked(
         "WHERE active = TRUE AND locked_until > %s AND scope = %s"
     )
     params: list[Any] = [now, scope]
+    if account_id is not None:
+        sql += " AND account_id = %s"
+        params.append(account_id)
 
     if scope == "global":
         # global 锁不区分 market/symbol；这两个字段在 DB 里也是 NULL
@@ -188,24 +211,29 @@ async def manual_unlock(
     *,
     unlocked_by: str,
     unlock_reason: str,
+    account_id: str | None = None,
 ) -> bool:
     """人工 unlock。软删（active=FALSE + 写入 unlock_at / unlocked_by / unlock_reason）。
 
+    ``account_id`` 提供时限定只能解锁本账户的锁（多租户隔离）；None 表示不过滤。
+
     Returns:
-        True 如果有行被改；False 如果 lock_id 不存在或已 inactive。
+        True 如果有行被改；False 如果 lock_id 不存在、已 inactive、或不属该账户。
     """
+    sql = """
+        UPDATE risk_locks
+        SET active = FALSE,
+            unlocked_at = NOW(),
+            unlocked_by = %s,
+            unlock_reason = %s
+        WHERE id = %s AND active = TRUE
+    """
+    params: list[Any] = [unlocked_by, unlock_reason, lock_id]
+    if account_id is not None:
+        sql += " AND account_id = %s"
+        params.append(account_id)
     async with conn.cursor() as cur:
-        await cur.execute(
-            """
-            UPDATE risk_locks
-            SET active = FALSE,
-                unlocked_at = NOW(),
-                unlocked_by = %s,
-                unlock_reason = %s
-            WHERE id = %s AND active = TRUE
-            """,
-            (unlocked_by, unlock_reason, lock_id),
-        )
+        await cur.execute(sql, tuple(params))
         return cur.rowcount > 0
 
 

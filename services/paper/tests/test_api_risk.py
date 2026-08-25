@@ -16,10 +16,15 @@ import pytest_asyncio
 from fastapi.testclient import TestClient
 from inalpha_shared.db import get_conn
 
+from inalpha_paper.account_id import account_id_from_sub
 from inalpha_paper.api.risk import _reset_config_cache
 from inalpha_paper.execution.risk_rules import RiskRulesConfig
 
 pytestmark = pytest.mark.integration
+
+# auth_headers fixture 的默认 sub="test-user"；API 按 account_id_from_user(user) 过滤，
+# 故测试要能看到锁，insert 时得用同一个 account_id。
+TEST_ACCOUNT = str(account_id_from_sub("test-user"))
 
 
 _RISK_LOCKS_DDL = """
@@ -38,7 +43,8 @@ CREATE TABLE IF NOT EXISTS risk_locks (
     active          BOOLEAN NOT NULL DEFAULT TRUE,
     unlocked_at     TIMESTAMPTZ,
     unlocked_by     TEXT,
-    unlock_reason   TEXT
+    unlock_reason   TEXT,
+    account_id      TEXT
 )
 """
 
@@ -56,7 +62,7 @@ async def risk_locks_table(client: TestClient) -> AsyncIterator[None]:
     """Ensure `risk_locks` 表存在 + 测试前后清空（独立于 alembic 命令行）。
 
     依赖 client fixture 拉起 DB pool。CREATE TABLE IF NOT EXISTS 幂等。
-    DDL 必须与 `infra/migrations/versions/0006_risk_locks.py` 保持一致。
+    DDL 必须与 `infra/migrations/versions/0040_risk_locks_account_id.py`（含 account_id）保持一致。
     """
     del client  # 仅作 lifespan 依赖
     async with get_conn() as conn:
@@ -148,6 +154,7 @@ async def test_get_locks_returns_inserted_rows(
             market="binance",
             symbol="BTC/USDT@binance",
             side="*",
+            account_id=TEST_ACCOUNT,
         )
         await conn.commit()
 
@@ -175,10 +182,12 @@ async def test_get_locks_filter_by_scope(
     async with get_conn() as conn:
         await locks_store.insert(
             conn, scope="global", rule_name="R1", reason="g", locked_until=until,
+            account_id=TEST_ACCOUNT,
         )
         await locks_store.insert(
             conn, scope="symbol", rule_name="R2", reason="s", locked_until=until,
             market="binance", symbol="BTC/USDT@binance",
+            account_id=TEST_ACCOUNT,
         )
         await conn.commit()
 
@@ -187,6 +196,33 @@ async def test_get_locks_filter_by_scope(
     body = r.json()
     assert len(body["locks"]) == 1
     assert body["locks"][0]["scope"] == "global"
+
+
+@pytest.mark.asyncio
+async def test_get_locks_isolated_by_account(
+    client: TestClient, auth_headers: dict[str, str], risk_locks_table: None
+) -> None:
+    """跨账户隔离：其他账户的锁不可见，本账户的锁可见。"""
+    del risk_locks_table
+    from inalpha_paper.storage import risk_locks as locks_store
+
+    until = datetime.now(UTC) + timedelta(hours=1)
+    async with get_conn() as conn:
+        await locks_store.insert(
+            conn, scope="global", rule_name="OtherRule", reason="他人锁",
+            locked_until=until, account_id="someone-else",
+        )
+        await locks_store.insert(
+            conn, scope="global", rule_name="MyRule", reason="本账户锁",
+            locked_until=until, account_id=TEST_ACCOUNT,
+        )
+        await conn.commit()
+
+    r = client.get("/risk/locks", headers=auth_headers)
+    assert r.status_code == 200
+    locks = r.json()["locks"]
+    assert len(locks) == 1
+    assert locks[0]["rule_name"] == "MyRule"
 
 
 # ─── GET /risk/locks/history ───
@@ -205,11 +241,13 @@ async def test_get_locks_history_includes_expired_and_unlocked(
         await locks_store.insert(
             conn, scope="global", rule_name="ActiveRule", reason="生效",
             locked_until=now + timedelta(hours=1),
+            account_id=TEST_ACCOUNT,
         )
         await locks_store.insert(
             conn, scope="symbol", rule_name="CooldownRule", reason="冷却过期",
             locked_until=now - timedelta(minutes=1),
             market="binance", symbol="BTC/USDT@binance",
+            account_id=TEST_ACCOUNT,
         )
         await conn.commit()
 
@@ -246,6 +284,7 @@ async def test_get_locks_history_respects_limit(
             await locks_store.insert(
                 conn, scope="global", rule_name=f"R{i}", reason="x",
                 locked_until=until,
+                account_id=TEST_ACCOUNT,
             )
         await conn.commit()
 
@@ -274,6 +313,7 @@ async def test_unlock_success(
             locked_until=until,
             market="binance",
             symbol="BTC/USDT@binance",
+            account_id=TEST_ACCOUNT,
         )
         await conn.commit()
 

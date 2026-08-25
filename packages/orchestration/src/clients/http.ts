@@ -56,9 +56,13 @@ export class HttpClient {
     return await this.request<T>("GET", url);
   }
 
-  async post<T>(path: string, body: unknown): Promise<T> {
+  async post<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+  ): Promise<T> {
     const url = this.buildUrl(path);
-    return await this.request<T>("POST", url, body);
+    return await this.request<T>("POST", url, body, headers);
   }
 
   private buildUrl(
@@ -76,7 +80,12 @@ export class HttpClient {
     return url.toString();
   }
 
-  private async request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  private async request<T>(
+    method: string,
+    url: string,
+    body?: unknown,
+    extraHeaders?: Record<string, string>,
+  ): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -87,6 +96,7 @@ export class HttpClient {
         headers: {
           "Authorization": `Bearer ${this.token}`,
           ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...extraHeaders,
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
