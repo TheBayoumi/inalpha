@@ -216,7 +216,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg://quant:devpass@localhost:5432/inalpha_test
       INALPHA_MIGRATION_TEST_DATABASE_URL: postgresql+psycopg://quant:devpass@localhost:5432/inalpha_migration_ci_test
       EVOLVER_TEST_DATABASE_URL: postgresql+psycopg://quant:devpass@localhost:5432/inalpha_migration_ci_test
-      JWT_SECRET: ci-test-secret-do-not-use
+      JWT_SECRET: test-secret-do-not-use-in-prod-please-and-thank-you
       DATA_SERVICE_URL: http://data-mock.test
       PAPER_POOL_DISABLED: "1"
       INALPHA_LIVE_RUNNER_RESUME_ON_STARTUP: "false"
