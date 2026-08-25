@@ -232,8 +232,8 @@ jobs:
         run: uv sync --frozen
       - name: Apply schema for Evolver tests
         if: matrix.service == 'evolver'
-        working-directory: services/evolver
-        run: uv run alembic -c ../../infra/migrations/alembic.ini upgrade head
+        working-directory: infra/migrations
+        run: uv run --project ../../services/evolver alembic upgrade head
       - name: Run service tests
         working-directory: services/${{ matrix.service }}
         run: uv run pytest -q tests
