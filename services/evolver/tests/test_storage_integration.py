@@ -1,4 +1,5 @@
 """Evolver DB storage 集成测试。"""
+
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +12,8 @@ from inalpha_shared.db import close_pool, get_conn, init_pool
 
 from inalpha_evolver.governor.seed import SEED_STRATEGY_CODE
 from inalpha_evolver.storage import candidates, run_queries, runs
+
+from .llm_snapshot_fixtures import llm_snapshot
 
 
 @pytest.mark.asyncio
@@ -42,6 +45,7 @@ async def test_run_idempotency_owner_scope_and_slot() -> None:
             "seed_hash": hashlib.sha256(SEED_STRATEGY_CODE.encode()).hexdigest(),
             "budget": 2,
             "config": config,
+            "llm_snapshot": llm_snapshot(),
             "queued_at": now,
         }
         async with get_conn() as conn:

@@ -1,8 +1,11 @@
 """queued run 的数据加载、评估器构建与执行。"""
+
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -15,6 +18,7 @@ from inalpha_shared.db import get_conn
 from ..config import EvolverSettings
 from ..data import FrozenBarsLoader
 from ..evaluator import FrozenDatasetEvaluator
+from ..owner_llm import build_owner_mutator
 from ..storage import runs
 from .generation import execute_generation
 
@@ -22,7 +26,7 @@ from .generation import execute_generation
 async def execute_run(
     run: dict[str, Any],
     *,
-    mutator: Any,
+    mutator: Any | None,
     settings: EvolverSettings,
 ) -> None:
     config = _parse_config(run["config"])
@@ -61,7 +65,25 @@ async def execute_run(
         fee_rate=float(config.get("fee_rate", 0.001)),
         validation_split=float(config.get("validation_split", 0.3)),
     )
-    await execute_generation(run, mutator=mutator, evaluator=evaluator)
+    async with _run_mutator(run, mutator, settings) as active_mutator:
+        await execute_generation(run, mutator=active_mutator, evaluator=evaluator)
+
+
+@asynccontextmanager
+async def _run_mutator(
+    run: dict[str, Any],
+    injected: Any | None,
+    settings: EvolverSettings,
+) -> AsyncIterator[Any]:
+    """生产按 run 解析 owner 凭据；测试注入路径不接管其生命周期。"""
+    if injected is not None:
+        yield injected
+        return
+    owner_mutator = await build_owner_mutator(run, settings)
+    try:
+        yield owner_mutator
+    finally:
+        await owner_mutator.close()
 
 
 def _parse_config(config: dict[str, Any]) -> dict[str, Any]:

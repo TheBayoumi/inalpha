@@ -67,6 +67,16 @@ class EvolverSettings(BaseSettings):
         default="http://127.0.0.1:8001",
         alias="DATA_SERVICE_URL",
     )
+    dashboard_service_url: str = Field(
+        default="http://127.0.0.1:3001",
+        alias="DASHBOARD_SERVICE_URL",
+    )
+    evolver_llm_timeout_s: int = Field(
+        default=120,
+        alias="EVOLVER_LLM_TIMEOUT_S",
+        ge=1,
+        le=600,
+    )
     jwt_secret: str = Field(default="dev-secret", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     service_token_ttl_s: int = Field(default=3600, ge=60, le=86400)

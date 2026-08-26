@@ -1,4 +1,6 @@
 """Evolver API schema 与 presenter 单测。"""
+
+import copy
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -10,9 +12,12 @@ from inalpha_evolver.api.presenters import candidate_response, run_response
 from inalpha_evolver.api.request_hash import normalized_request
 from inalpha_evolver.api.schemas import (
     EvolutionConfig,
+    EvolutionLLMSnapshot,
     RunStatusResponse,
     StartRunRequest,
 )
+
+from .llm_snapshot_fixtures import VALID_LLM_SNAPSHOT, llm_snapshot
 
 
 def _request(symbol: str = "BTCUSDT") -> StartRunRequest:
@@ -24,7 +29,8 @@ def _request(symbol: str = "BTCUSDT") -> StartRunRequest:
             timeframe="1h",
             from_ts=now - timedelta(days=30),
             as_of=now,
-        )
+        ),
+        llm=EvolutionLLMSnapshot.model_validate(llm_snapshot()),
     )
 
 
@@ -36,6 +42,40 @@ def test_request_hash_is_stable_and_payload_sensitive() -> None:
     assert config_a == config_b
     assert hash_a == hash_b
     assert hash_a != hash_c
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("model",), "tampered-model"),
+        (("base_url",), "https://evil.example/v1"),
+        (("pricing", "input_usd_per_million"), 0.01),
+    ],
+)
+def test_llm_snapshot_digest_rejects_tampering(
+    path: tuple[str, ...],
+    value: str | float,
+) -> None:
+    payload = copy.deepcopy(VALID_LLM_SNAPSHOT)
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises(ValueError, match="config_digest"):
+        EvolutionLLMSnapshot.model_validate(payload)
+
+
+def test_llm_snapshot_digest_matches_typescript_contract() -> None:
+    snapshot = EvolutionLLMSnapshot.model_validate(llm_snapshot())
+    assert snapshot.config_digest == VALID_LLM_SNAPSHOT["config_digest"]
+
+
+def test_non_openai_compatible_provider_is_rejected() -> None:
+    payload = llm_snapshot()
+    payload["provider"] = "anthropic"
+    with pytest.raises(ValueError):
+        EvolutionLLMSnapshot.model_validate(payload)
 
 
 def test_invalid_window_is_rejected() -> None:
@@ -71,7 +111,9 @@ def test_run_presenter_converts_numeric_cost() -> None:
 def test_datetime_inputs_normalize_or_fail_without_type_error() -> None:
     now = datetime.now(UTC) - timedelta(minutes=1)
     config = EvolutionConfig(
-        venue="binance", symbol="BTCUSDT", timeframe="1h",
+        venue="binance",
+        symbol="BTCUSDT",
+        timeframe="1h",
         from_ts=(now - timedelta(days=1)).replace(tzinfo=None),
         as_of=now.astimezone(timezone(timedelta(hours=9))),
     )
@@ -79,8 +121,12 @@ def test_datetime_inputs_normalize_or_fail_without_type_error() -> None:
     assert config.as_of.tzinfo == UTC
     with pytest.raises(ValueError, match="timezone-aware"):
         EvolutionConfig(
-            venue="binance", symbol="BTCUSDT", timeframe="1h",
-            from_ts=now - timedelta(days=1), as_of=now.replace(tzinfo=None))
+            venue="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            from_ts=now - timedelta(days=1),
+            as_of=now.replace(tzinfo=None),
+        )
 
 
 def test_future_as_of_returns_http_422() -> None:
@@ -93,10 +139,15 @@ def test_future_as_of_returns_http_422() -> None:
     future = datetime.now(UTC) + timedelta(minutes=1)
     response = TestClient(app).post(
         "/validate",
-        json={"config": {"venue": "binance", "symbol": "BTCUSDT",
-                         "timeframe": "1h",
-                         "from_ts": (future - timedelta(days=1)).isoformat(),
-                         "as_of": future.isoformat()}},
+        json={
+            "config": {
+                "venue": "binance",
+                "symbol": "BTCUSDT",
+                "timeframe": "1h",
+                "from_ts": (future - timedelta(days=1)).isoformat(),
+                "as_of": future.isoformat(),
+            }
+        },
     )
     assert response.status_code == 422
     assert "trusted current time" in response.text
@@ -104,16 +155,27 @@ def test_future_as_of_returns_http_422() -> None:
 
 def test_candidate_response_exposes_data_epoch() -> None:
     candidate_id, run_id = uuid4(), uuid4()
-    response = candidate_response({
-        "candidate_id": candidate_id, "run_id": run_id, "slot": 1,
-        "generation": 1, "stage": "evaluation", "outcome": "succeeded",
-        "data_epoch": 1_786_000_000_000,
-    })
+    response = candidate_response(
+        {
+            "candidate_id": candidate_id,
+            "run_id": run_id,
+            "slot": 1,
+            "generation": 1,
+            "stage": "evaluation",
+            "outcome": "succeeded",
+            "data_epoch": 1_786_000_000_000,
+        }
+    )
     assert response.data_epoch == 1_786_000_000_000
 
 
 def test_run_dto_exposes_manifest_cutoff_and_lag() -> None:
     manifest = RunStatusResponse.model_json_schema()["$defs"]["DatasetManifest"]
     required = set(manifest["required"])
-    assert {"latest_bar_ts", "cutoff_bar_ts", "freshness_lag_seconds",
-            "data_epoch", "backfill"} <= required
+    assert {
+        "latest_bar_ts",
+        "cutoff_bar_ts",
+        "freshness_lag_seconds",
+        "data_epoch",
+        "backfill",
+    } <= required

@@ -1,11 +1,18 @@
 """Evolver API 请求与响应模型。"""
+
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from decimal import Decimal
+from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
 from ..data.datetime_policy import MAX_AS_OF_CLOCK_SKEW
 from ..data.manifest import DatasetManifest
@@ -42,10 +49,84 @@ class EvolutionConfig(BaseModel):
         return self
 
 
+class EvolutionPricingSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str = Field(min_length=1, max_length=80)
+    currency: Literal["USD"]
+    input_usd_per_million: float = Field(gt=0)
+    output_usd_per_million: float = Field(gt=0)
+    assumed_input_tokens: int = Field(gt=0, le=1_000_000)
+    max_output_tokens: int = Field(gt=0, le=100_000)
+    estimated_max_usd_per_candidate: float = Field(gt=0)
+
+
+class EvolutionLLMSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    config_id: str = Field(min_length=1, max_length=128)
+    provider: Literal["deepseek", "openai", "kimi", "zhipu"]
+    model: str = Field(min_length=1, max_length=160)
+    base_url: str | None = Field(default=None, max_length=500)
+    pricing: EvolutionPricingSnapshot
+    config_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("LLM base_url must be an absolute HTTP URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("LLM base_url cannot contain credentials, query, or fragment")
+        return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def verify_config_digest(self) -> EvolutionLLMSnapshot:
+        """拒绝任何未被 Mastra 审批摘要覆盖的快照字段变更。"""
+        expected = compute_llm_config_digest(self)
+        if not hmac.compare_digest(self.config_digest, expected):
+            raise PydanticCustomError(
+                "llm_snapshot_digest",
+                "LLM config_digest does not match the frozen snapshot",
+            )
+        return self
+
+
+def compute_llm_config_digest(snapshot: EvolutionLLMSnapshot) -> str:
+    """按与 TypeScript 相同的字段顺序和数字文本计算跨语言摘要。"""
+    pricing = snapshot.pricing
+    canonical = [
+        snapshot.config_id,
+        snapshot.provider,
+        snapshot.model,
+        snapshot.base_url,
+        pricing.version,
+        pricing.currency,
+        _number_text(pricing.input_usd_per_million),
+        _number_text(pricing.output_usd_per_million),
+        _number_text(pricing.assumed_input_tokens),
+        _number_text(pricing.max_output_tokens),
+        _number_text(pricing.estimated_max_usd_per_candidate),
+    ]
+    encoded = json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _number_text(value: int | float) -> str:
+    text = format(Decimal(str(value)), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
 class StartRunRequest(BaseModel):
     seed_strategy_id: str = Field(default="sma_cross_v1", max_length=128)
     budget: int = Field(default=4, ge=1, le=20)
     config: EvolutionConfig
+    llm: EvolutionLLMSnapshot
 
 
 class CandidateResponse(BaseModel):
@@ -77,6 +158,8 @@ class RunStatusResponse(BaseModel):
     seed_strategy_id: str
     budget: int
     config: dict[str, Any]
+    llm_snapshot: EvolutionLLMSnapshot | None = None
+    llm_config_digest: str | None = None
     status: str
     active_stage: str | None = None
     llm_cost_usd: float = 0.0

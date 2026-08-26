@@ -26,6 +26,13 @@
  *   让 Mastra runtime 把它当 tool 报错处理（LLM 看到错误消息能下一轮决策）。
  * - 现阶段不接 permission engine，仅留 ``permissionResolver`` 参数。task #3 接入。
  */
+import {
+  APPROVAL_OPERATION_ID_KEY,
+  getRequestContextValue,
+  setRequestContextValue,
+  USER_LLM_SNAPSHOT_KEY,
+  type EvolutionLLMSnapshot,
+} from "../mastra/llm/evolution-snapshot.js";
 import { projectApprovalInput } from "../permissions/approval-identity.js";
 import {
   type PendingApprovalsStore,
@@ -193,8 +200,15 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
 
         if (permDecision === "ask") {
           const store = opts.pendingApprovals ?? defaultPendingApprovals;
-          const approvalInput = projectApprovalInput(toolName, effectiveInput);
-          if (!authSub || !sessionId) {
+          const projectedInput = projectApprovalInput(toolName, effectiveInput);
+          const llmSnapshot =
+            toolName === "evolver.run_evolution"
+              ? getRequestContextValue<EvolutionLLMSnapshot>(ctx, USER_LLM_SNAPSHOT_KEY)
+              : undefined;
+          const approvalInput = llmSnapshot
+            ? { request: projectedInput, llm_snapshot: llmSnapshot }
+            : projectedInput;
+          if (!authSub || !sessionId || (toolName === "evolver.run_evolution" && !llmSnapshot)) {
             return {
               isError: true,
               deniedBy: "permission-ask",
@@ -202,25 +216,28 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
               toolName,
               toolInput: effectiveInput,
               message:
-                `APPROVAL_UNAVAILABLE: tool "${toolName}" cannot run because a verified owner ` +
-                `and stable thread/session ID are required. Do not retry or infer consent from chat text. ` +
-                `Explain this in the user's latest language.`,
+                `APPROVAL_UNAVAILABLE: tool "${toolName}" requires a verified owner, stable ` +
+                `thread/session, and a frozen non-secret LLM configuration. Do not retry or infer ` +
+                `consent from chat text. Explain this in the user's latest language.`,
             };
           }
 
-          if (
-            !store.consumeApproved({
-              authSub,
-              sessionId,
-              toolName,
-              approvalInput,
-            })
-          ) {
+          const operationId = store.consumeApproved({
+            authSub,
+            sessionId,
+            toolName,
+            approvalInput,
+            reuseAfterConsume: toolName === "evolver.run_evolution",
+          });
+          if (!operationId) {
+            const approvalViewInput = llmSnapshot
+              ? { request: effectiveInput, llm_snapshot: llmSnapshot }
+              : effectiveInput;
             const pending = store.request({
               authSub,
               sessionId,
               toolName,
-              toolInput: effectiveInput,
+              toolInput: approvalViewInput,
               approvalInput,
               timeoutMs:
                 opts.askTimeoutMs && opts.askTimeoutMs > 0 ? opts.askTimeoutMs : undefined,
@@ -231,14 +248,15 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
               requiresApproval: true,
               requestId: pending.requestId,
               toolName,
-              toolInput: effectiveInput,
+              toolInput: approvalViewInput,
               message:
                 `APPROVAL_REQUIRED: tool "${toolName}" needs an explicit decision through the ` +
                 `trusted approval UI/API. Chat text, a new turn, or model output cannot approve it. ` +
-                `Show the purpose and key inputs, then wait. Reply in the user's latest language. ` +
-                `If denied or expired, cancel the action and do not retry automatically.`,
+                `Show the purpose, frozen model, estimated cost, and key inputs, then wait. Reply in ` +
+                `the user's latest language. If denied or expired, cancel the action.`,
             };
           }
+          setRequestContextValue(ctx, APPROVAL_OPERATION_ID_KEY, operationId);
         }
 
         // 3. execute

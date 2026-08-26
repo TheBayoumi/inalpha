@@ -158,6 +158,8 @@ services:
       PORT: 8005
       WORKERS: 1
       DATA_SERVICE_URL: http://data:8001
+      DASHBOARD_SERVICE_URL: http://dashboard:3001
+      EVOLVER_LLM_TIMEOUT_S: ${EVOLVER_LLM_TIMEOUT_S:-120}
     deploy:
       replicas: 1
     depends_on:

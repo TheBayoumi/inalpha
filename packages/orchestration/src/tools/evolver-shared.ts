@@ -1,9 +1,16 @@
 /** Evolver Mastra tools 的共享 schema 与客户端解析。 */
 import { z } from "zod";
 
-import { resolveRequestToken } from "../auth.js";
+import { mintServiceToken, resolveRequestToken } from "../auth.js";
 import { EvolverClient } from "../clients/evolver.js";
 import { getSettings } from "../config.js";
+import { AUTH_SUB_KEY } from "../hooks/with-hooks.js";
+import {
+  APPROVAL_OPERATION_ID_KEY,
+  getRequestContextValue,
+  USER_LLM_SNAPSHOT_KEY,
+  type EvolutionLLMSnapshot,
+} from "../mastra/llm/evolution-snapshot.js";
 
 export type ToolRequestContext = { authToken?: string; get?: (key: string) => unknown };
 
@@ -13,6 +20,43 @@ export async function getEvolverClient(ctx?: ToolRequestContext): Promise<Evolve
     token: await resolveRequestToken(ctx),
     timeoutMs: 30_000,
   });
+}
+
+export async function getApprovedEvolutionRunContext(
+  ctx?: ToolRequestContext,
+): Promise<{
+  client: EvolverClient;
+  operationId: string;
+  approvalToken: string;
+  llmSnapshot: EvolutionLLMSnapshot;
+}> {
+  const operationId = getRequestContextValue<string>(
+    { requestContext: ctx },
+    APPROVAL_OPERATION_ID_KEY,
+  );
+  const llmSnapshot = getRequestContextValue<EvolutionLLMSnapshot>(
+    { requestContext: ctx },
+    USER_LLM_SNAPSHOT_KEY,
+  );
+  const authSub = ctx?.get?.(AUTH_SUB_KEY);
+  if (!operationId || !llmSnapshot || typeof authSub !== "string" || !authSub) {
+    throw new Error("explicit evolution approval context is missing");
+  }
+  const approvalToken = await mintServiceToken(
+    {
+      sub: authSub,
+      token_use: "evolution_approval",
+      operation_id: operationId,
+      llm_config_digest: llmSnapshot.config_digest,
+    },
+    300,
+  );
+  return {
+    client: await getEvolverClient(ctx),
+    operationId,
+    approvalToken,
+    llmSnapshot,
+  };
 }
 
 export const evolutionConfigSchema = z.object({

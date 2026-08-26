@@ -28,11 +28,18 @@ export interface PendingConsumeArgs {
   approvalInput: unknown;
   sessionId: string;
   authSub: string;
+  reuseAfterConsume?: boolean;
 }
 
 interface PendingApprovalRecord extends PendingApprovalView {
   authSub: string;
   status: "pending" | "approved";
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface ConsumedApprovalRecord {
+  operationId: string;
+  deadline: string;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -62,6 +69,7 @@ export function approvalInputDigest(input: unknown): string {
 export class PendingApprovalsStore {
   private readonly records = new Map<string, PendingApprovalRecord>();
   private readonly identityIndex = new Map<string, string>();
+  private readonly consumedByIdentity = new Map<string, ConsumedApprovalRecord>();
   private readonly telemetry: PendingTelemetrySink;
   private readonly persistence?: ApprovalPersistence;
 
@@ -139,17 +147,43 @@ export class PendingApprovalsStore {
     return true;
   }
 
-  /** Atomically consumes one approved decision matching owner, thread, tool, and input digest. */
-  consumeApproved(args: PendingConsumeArgs): boolean {
+  /** Atomically consumes one approved decision and returns its stable operation ID. */
+  consumeApproved(args: PendingConsumeArgs): string | undefined {
     const identity = this.identityFor(args);
+    const consumed = args.reuseAfterConsume ? this.consumedByIdentity.get(identity) : undefined;
+    if (consumed) {
+      if (Date.now() >= Date.parse(consumed.deadline)) {
+        this.removeConsumed(identity);
+      } else {
+        this.telemetry({
+          event: "ask_approval_operation_reused",
+          requestId: consumed.operationId,
+          toolName: args.toolName,
+          sessionId: args.sessionId,
+          authSub: args.authSub,
+          ts: new Date().toISOString(),
+        });
+        return consumed.operationId;
+      }
+    }
     const requestId = this.identityIndex.get(identity);
     const record = requestId ? this.records.get(requestId) : undefined;
-    if (!record || record.status !== "approved") return false;
+    if (!record || record.status !== "approved") return undefined;
     if (Date.now() >= Date.parse(record.deadline)) {
       this.expire(record.requestId);
-      return false;
+      return undefined;
     }
     this.remove(record);
+    if (args.reuseAfterConsume) {
+      this.consumedByIdentity.set(identity, {
+        operationId: record.requestId,
+        deadline: record.deadline,
+        timer: setTimeout(
+          () => this.removeConsumed(identity),
+          Math.max(Date.parse(record.deadline) - Date.now(), 0),
+        ),
+      });
+    }
     this.telemetry({
       event: "ask_approval_consumed",
       requestId: record.requestId,
@@ -159,10 +193,9 @@ export class PendingApprovalsStore {
       inputDigest: record.inputDigest,
       ts: new Date().toISOString(),
     });
-    return true;
+    return record.requestId;
   }
 
-  /** Returns the number of active pending or approved records. */
   size(): number {
     return this.records.size;
   }
@@ -174,6 +207,9 @@ export class PendingApprovalsStore {
       if (record.status === "pending") {
         this.persist((p) => p.markResolved(record.requestId, reason, "user"));
       }
+    }
+    for (const identity of Array.from(this.consumedByIdentity.keys())) {
+      this.removeConsumed(identity);
     }
   }
 
@@ -202,6 +238,13 @@ export class PendingApprovalsStore {
     this.identityIndex.delete(
       this.identityKey(record.authSub, record.sessionId, record.toolName, record.inputDigest),
     );
+  }
+
+  private removeConsumed(identity: string): void {
+    const record = this.consumedByIdentity.get(identity);
+    if (!record) return;
+    clearTimeout(record.timer);
+    this.consumedByIdentity.delete(identity);
   }
 
   private identityFor(args: PendingConsumeArgs): string {

@@ -1,12 +1,15 @@
 """LLM 变异客户端 —— 包装 ``_shared/llm`` 的 LLMClient，组装 prompt 模板。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
 
-from inalpha_shared_llm import LLMClient as SharedLLMClient
-from inalpha_shared_llm.client import MockLLMClient as SharedMockLLMClient
-from inalpha_shared_llm.types import MutationRequest
+from inalpha_shared_llm import LLMClient as SharedLLMClient  # type: ignore[import-untyped]
+from inalpha_shared_llm.client import (  # type: ignore[import-untyped]
+    MockLLMClient as SharedMockLLMClient,
+)
+from inalpha_shared_llm.types import CacheMetrics, MutationRequest  # type: ignore[import-untyped]
 
 from ..exceptions import DiffApplyError, LLMError
 from .diff_applier import apply_diff
@@ -56,6 +59,10 @@ class MutationResult:
     """本次 LLM 调用的估算费用（美元）。"""
     cache_hit_tokens: int
     """本次 LLM 调用的缓存命中 tokens（用于 cache 效率统计）。"""
+    input_tokens: int = 0
+    """本次 LLM 调用的输入 tokens。"""
+    output_tokens: int = 0
+    """本次 LLM 调用的输出 tokens。"""
 
 
 @dataclass(slots=True)
@@ -66,10 +73,20 @@ class Mutator:
     测试时可换 ``MockLLMClient``。
     """
 
-    llm_client: SharedLLMClient | SharedMockLLMClient = field(
-        default_factory=SharedLLMClient
-    )
+    llm_client: SharedLLMClient | SharedMockLLMClient = field(default_factory=SharedLLMClient)
     max_fuzz: int = 3
+    input_usd_per_million: float | None = None
+    output_usd_per_million: float | None = None
+    max_output_tokens: int = 8192
+
+    def __post_init__(self) -> None:
+        rates = (self.input_usd_per_million, self.output_usd_per_million)
+        if (rates[0] is None) != (rates[1] is None):
+            raise ValueError("input and output pricing rates must be configured together")
+        if any(rate is not None and rate <= 0 for rate in rates):
+            raise ValueError("pricing rates must be positive")
+        if self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive")
 
     async def mutate(
         self,
@@ -95,7 +112,7 @@ class Mutator:
         request = MutationRequest(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_tokens=8192,  # diff 可能很长，DeepSeek 需要足够输出空间
+            max_tokens=self.max_output_tokens,
         )
 
         try:
@@ -104,6 +121,8 @@ class Mutator:
             raise LLMError(f"LLM 变异调用失败：{exc}") from exc
 
         raw_diff = _clean_llm_diff(response.content)
+        metrics = response.cache_metrics
+        llm_cost_usd = self._cost_usd(metrics)
 
         # 空 diff = LLM 认为无需改动
         if not raw_diff or not raw_diff.startswith("---"):
@@ -111,8 +130,10 @@ class Mutator:
                 new_source=current_source,
                 unified_diff=None,
                 source_hash=sha256(current_source.encode()).hexdigest(),
-                llm_cost_usd=response.cache_metrics.cost_usd,
-                cache_hit_tokens=response.cache_metrics.cache_read_tokens,
+                llm_cost_usd=llm_cost_usd,
+                cache_hit_tokens=metrics.cache_read_tokens,
+                input_tokens=metrics.input_tokens,
+                output_tokens=metrics.output_tokens,
             )
 
         try:
@@ -123,12 +144,33 @@ class Mutator:
                 str(exc),
                 original=current_source,
                 failed_diff=raw_diff,
+                llm_cost_usd=llm_cost_usd,
+                cache_hit_tokens=metrics.cache_read_tokens,
+                input_tokens=metrics.input_tokens,
+                output_tokens=metrics.output_tokens,
             ) from exc
 
         return MutationResult(
             new_source=new_source,
             unified_diff=raw_diff,
             source_hash=sha256(new_source.encode()).hexdigest(),
-            llm_cost_usd=response.cache_metrics.cost_usd,
-            cache_hit_tokens=response.cache_metrics.cache_read_tokens,
+            llm_cost_usd=llm_cost_usd,
+            cache_hit_tokens=metrics.cache_read_tokens,
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+        )
+
+    async def close(self) -> None:
+        """关闭该 run 独占的底层 LLM HTTP client。"""
+        await self.llm_client.close()
+
+    def _cost_usd(self, metrics: CacheMetrics) -> float:
+        if self.input_usd_per_million is None or self.output_usd_per_million is None:
+            return float(metrics.cost_usd)
+        return float(
+            (
+                metrics.input_tokens * self.input_usd_per_million
+                + metrics.output_tokens * self.output_usd_per_million
+            )
+            / 1_000_000
         )

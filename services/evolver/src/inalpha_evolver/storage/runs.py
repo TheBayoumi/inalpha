@@ -7,10 +7,11 @@ from uuid import UUID, uuid4
 
 from psycopg import AsyncConnection
 
-_COLUMNS = """run_id,owner_account_id,requested_by_sub,seed_strategy_id,budget,config,status,
-llm_cost_usd,queued_at,started_at,updated_at,finished_at,venue,symbol,request_timeframe,
-data_timeframe,engine_timeframe,requested_as_of,seed_source_snapshot,seed_source_hash,
-seed_report_snapshot,baseline_snapshot,dataset_manifest,active_stage,failure_code,failure_message"""
+_COLUMNS = """run_id,owner_account_id,requested_by_sub,seed_strategy_id,budget,config,
+llm_snapshot,llm_config_digest,status,llm_cost_usd,queued_at,started_at,updated_at,finished_at,
+venue,symbol,request_timeframe,data_timeframe,engine_timeframe,requested_as_of,
+seed_source_snapshot,seed_source_hash,seed_report_snapshot,baseline_snapshot,dataset_manifest,
+active_stage,failure_code,failure_message"""
 
 
 async def insert_run(
@@ -25,16 +26,17 @@ async def insert_run(
     seed_hash: str,
     budget: int,
     config: dict[str, Any],
+    llm_snapshot: dict[str, Any],
     queued_at: datetime,
 ) -> tuple[dict[str, Any], bool]:
     run_id = uuid4()
     async with conn.cursor() as cur:
         await cur.execute(
             f"""INSERT INTO strategy_evo_runs(run_id,owner_account_id,requested_by_sub,
-seed_strategy_id,budget,config,status,idempotency_key,request_hash,queued_at,started_at,
-venue,symbol,request_timeframe,data_timeframe,engine_timeframe,requested_as_of,
-seed_source_snapshot,seed_source_hash) VALUES
-(%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+seed_strategy_id,budget,config,llm_snapshot,llm_config_digest,status,idempotency_key,
+request_hash,queued_at,venue,symbol,request_timeframe,data_timeframe,engine_timeframe,
+requested_as_of,seed_source_snapshot,seed_source_hash) VALUES
+(%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 ON CONFLICT(owner_account_id,idempotency_key) DO NOTHING RETURNING {_COLUMNS},request_hash""",
             (
                 run_id,
@@ -43,9 +45,10 @@ ON CONFLICT(owner_account_id,idempotency_key) DO NOTHING RETURNING {_COLUMNS},re
                 seed_strategy_id,
                 budget,
                 json.dumps(config, default=str),
+                json.dumps(llm_snapshot),
+                llm_snapshot["config_digest"],
                 idempotency_key,
                 request_hash,
-                queued_at,
                 queued_at,
                 config["venue"],
                 config["symbol"],
@@ -97,7 +100,9 @@ async def transition(
     updates: dict[str, Any] = {"status": to_status, "updated_at": datetime.now().astimezone()}
     updates.update(values or {})
     assignments = ",".join(f"{key}=%s" for key in updates)
-    params: list[Any] = [json.dumps(value) if isinstance(value, dict) else value for value in updates.values()]
+    params: list[Any] = [
+        json.dumps(value) if isinstance(value, dict) else value for value in updates.values()
+    ]
     params.extend([run_id, list(from_statuses)])
     async with conn.cursor() as cur:
         await cur.execute(

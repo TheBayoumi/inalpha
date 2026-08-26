@@ -1,7 +1,6 @@
 /** services/evolver 的 owner-scoped API 客户端。 */
-import { createHash, randomUUID } from "node:crypto";
-
-import { HttpClient } from "./http.js";
+import { HttpClient, HttpClientError } from "./http.js";
+import type { EvolutionLLMSnapshot } from "../mastra/llm/evolution-snapshot.js";
 
 export type EvolutionConfig = {
   venue: string;
@@ -72,17 +71,26 @@ export class EvolverClient {
     budget?: number;
     seedStrategyId?: string;
     config: EvolutionConfig;
-    idempotencyKey?: string;
+    idempotencyKey: string;
+    approvalToken: string;
+    llmSnapshot: EvolutionLLMSnapshot;
   }): Promise<RunStatusResult> {
     const body = {
       budget: options.budget ?? 4,
       seed_strategy_id: options.seedStrategyId ?? "sma_cross_v1",
       config: options.config,
+      llm: options.llmSnapshot,
     };
-    const key = options.idempotencyKey ?? operationKey(body);
-    return await this.http.post<RunStatusResult>("/api/v1/runs", body, {
-      "Idempotency-Key": key,
-    });
+    const headers = {
+      "Idempotency-Key": options.idempotencyKey,
+      "X-Evolution-Approval": options.approvalToken,
+    };
+    try {
+      return await this.http.post<RunStatusResult>("/api/v1/runs", body, headers);
+    } catch (error) {
+      if (!(error instanceof HttpClientError) || ![502, 504].includes(error.status)) throw error;
+      return await this.http.post<RunStatusResult>("/api/v1/runs", body, headers);
+    }
   }
 
   async listRuns(limit = 20): Promise<RunListResult> {
@@ -100,9 +108,4 @@ export class EvolverClient {
   async abortRun(runId: string): Promise<RunStatusResult> {
     return await this.http.post<RunStatusResult>(`/api/v1/runs/${runId}/abort`, {});
   }
-}
-
-function operationKey(body: unknown): string {
-  const digest = createHash("sha256").update(JSON.stringify(body)).digest("hex").slice(0, 24);
-  return `tool-${digest}-${randomUUID().slice(0, 8)}`;
 }
