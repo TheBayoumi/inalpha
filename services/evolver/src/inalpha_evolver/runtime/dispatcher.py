@@ -19,7 +19,12 @@ async def dispatch_runs(manager: Any) -> None:
             await manager.semaphore.acquire()
             acquired = True
             async with get_conn() as conn:
-                run = await run_queries.claim_next(conn)
+                queue_timeout_s = getattr(manager.settings, "evolver_queue_timeout_s", None)
+                run = (
+                    await run_queries.claim_next(conn, queue_timeout_s=queue_timeout_s)
+                    if queue_timeout_s is not None
+                    else await run_queries.claim_next(conn)
+                )
             manager.unhealthy_reason = None
             delay = 0.1
             if run is None:

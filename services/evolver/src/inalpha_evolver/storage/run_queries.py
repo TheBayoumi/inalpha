@@ -40,10 +40,21 @@ WHERE r.owner_account_id=%s"""
     return [dict(row) for row in rows]
 
 
-async def claim_next(conn: AsyncConnection) -> dict[str, Any] | None:
-    """锁定最早 queued run 并原子切换为 running。"""
+async def claim_next(
+    conn: AsyncConnection,
+    *,
+    queue_timeout_s: int = 86400,
+) -> dict[str, Any] | None:
+    """先收口过期队列项，再锁定最早 queued run 并原子切换为 running。"""
     now = datetime.now(UTC)
     async with conn.cursor() as cur:
+        await cur.execute(
+            """UPDATE strategy_evo_runs SET status='aborted',active_stage='aborted',
+finished_at=%s,updated_at=%s,failure_code='EVOLUTION_QUEUE_TIMEOUT',
+failure_message='run exceeded its queue deadline'
+WHERE status='queued' AND queued_at < %s - make_interval(secs => %s)""",
+            (now, now, now, queue_timeout_s),
+        )
         await cur.execute(
             f"""WITH picked AS(SELECT run_id FROM strategy_evo_runs WHERE status='queued'
 ORDER BY queued_at FOR UPDATE SKIP LOCKED LIMIT 1)UPDATE strategy_evo_runs r SET

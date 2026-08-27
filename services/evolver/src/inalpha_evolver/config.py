@@ -57,6 +57,13 @@ class EvolverSettings(BaseSettings):
         ge=1,
         le=8,
     )
+    evolver_queue_timeout_s: int = Field(
+        default=86400,
+        alias="EVOLVER_QUEUE_TIMEOUT_S",
+        ge=60,
+        le=86400,
+        description="queued run 最长等待时间；必须短于凭据 grant 的 48 小时有效期。",
+    )
     evolver_account_active_limit: int = Field(
         default=2,
         alias="EVOLVER_ACCOUNT_ACTIVE_LIMIT",

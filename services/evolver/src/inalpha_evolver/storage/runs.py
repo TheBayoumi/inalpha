@@ -93,12 +93,14 @@ async def get_run(
 
 async def clear_credential_grant(conn: AsyncConnection, run_id: UUID) -> None:
     """凭据 capability 兑换成功后立即从持久化队列清除。"""
-    await conn.execute(
+    result = await conn.execute(
         """UPDATE strategy_evo_runs
         SET llm_credential_grant=NULL,llm_credential_grant_required=FALSE
-        WHERE run_id=%s""",
+        WHERE run_id=%s AND status='running'""",
         (run_id,),
     )
+    if result.rowcount != 1:
+        raise RuntimeError("credential grant can only be cleared for a running run")
 
 
 async def transition(

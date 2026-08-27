@@ -81,7 +81,7 @@ async def build_owner_mutator(
         llm_client=LLMClient(settings=llm_settings),
         input_usd_per_million=float(pricing["input_usd_per_million"]),
         output_usd_per_million=float(pricing["output_usd_per_million"]),
-        max_input_tokens=int(pricing["assumed_input_tokens"]),
+        max_input_utf8_bytes=int(pricing["assumed_input_tokens"]),
         max_output_tokens=int(pricing["max_output_tokens"]),
     )
 

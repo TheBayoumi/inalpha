@@ -231,7 +231,7 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 | ✅ 已上线 | 研究 → 策略 → 回测 lineage | D-8c | `deep_dive → compose_strategy → run_backtest` 全链路串 `research_id` / `backtest_id` |
 | ✅ 已上线 | LLM 自创策略 — E1 MVP | D-9 | 三道沙盒（AST 审计 / 子进程 / `Strategy` 协议契约） + 多目标 fitness + baseline 自动并跑 |
 | ✅ 已上线 | 策略演化 — E1 生产闭环 | E1 | `services/evolver:8005` · 计费动作显式审批 · unified-diff 变异 · 冻结数据集/hash · seed/baseline/candidate 同 bars 评估 · owner 隔离异步 run/slot 状态机 |
-| ✅ 已上线 | 冻结 LLM 审批快照 | E1 收口 | Dashboard 批准/拒绝 · owner/operation/模型/计价绑定 · Ed25519 一次性凭据 grant · 被拒变异也记 token/费用 |
+| ✅ 已上线 | 冻结 LLM 审批快照 | E1 收口 | Dashboard 批准/拒绝 · owner/operation/模型/计价绑定 · Ed25519 可重试凭据 grant · 被拒变异也记 token/费用 |
 | ✅ 已上线 | 风控引擎落到 HTTP 边界 | D-9 | 声明式 `risk_rules.toml` · 撮合前 `enforce` · `risk_locks` 表（独立 commit） |
 | ✅ 已上线 | Bull / Bear 研究员辩论 | D-9 | `services/research` 立场对抗研究员 |
 | ✅ 已上线 | Scheduler / cron agent 模式 | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` 管理面 |
@@ -396,7 +396,9 @@ service 起着，它就能连上。内置**黑白双主题**（终端「印章 /
 
 > orchestrator 与经显式审批的 `services/evolver` run 会消耗 owner 自己的 LLM key；
 > `services/research` 当前使用部署级 provider/key，`services/paper` 从不直接调用 LLM。Evolver
-> 通过绑定 owner/operation 且一次性消费的短效 grant 临时解析加密凭据；grant 兑换后清除，
+> 通过绑定 owner/operation/config/digest 的短效 grant 临时解析加密凭据；首次响应丢失时，
+> 同 scope 仅可在两分钟内补偿重试一次，
+> 成功后从队列清除 grant，
 > run 内只保留冻结的非敏感配置/计价快照。想用多个独立 terminal 手动起，或看底层 live trace（`mastra dev`
 > playground <http://127.0.0.1:4111>）？见 [`AGENTS.md §4`](AGENTS.md)。
 

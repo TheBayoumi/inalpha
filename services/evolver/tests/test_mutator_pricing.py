@@ -78,7 +78,7 @@ async def test_mutator_rejects_input_above_approved_budget_before_calling_provid
         llm_client=client,  # type: ignore[arg-type]
         input_usd_per_million=2.0,
         output_usd_per_million=10.0,
-        max_input_tokens=100,
+        max_input_utf8_bytes=100,
     )
 
     with pytest.raises(LLMError, match="超过已审批上限"):

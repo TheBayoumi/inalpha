@@ -56,25 +56,47 @@ def _insert_run(
     )
 
 
-def test_0041_preserves_old_rows_and_enforces_new_snapshots(
+def test_0041_aborts_legacy_work_and_enforces_new_snapshots(
     migration_db_url: str,
 ) -> None:
     alembic(migration_db_url, "upgrade", "0040")
     with psycopg.connect(db_url(migration_db_url), autocommit=True) as conn:
         _insert_run(conn, _LEGACY_RUN, "legacy-before-0041")
+        conn.execute(
+            """INSERT INTO strategy_evo_candidates
+            (candidate_id,run_id,generation,slot,stage,outcome,updated_at)
+            VALUES ('40000000-0000-0000-0000-000000000001',%s,0,0,'queued','pending',NOW())""",
+            (_LEGACY_RUN,),
+        )
 
     alembic(migration_db_url, "upgrade", "0041")
     with psycopg.connect(db_url(migration_db_url), autocommit=True) as conn:
         assert conn.execute(
-            """SELECT llm_snapshot,llm_config_digest,llm_snapshot_required,
+            """SELECT status,failure_code,llm_snapshot,llm_config_digest,llm_snapshot_required,
             llm_credential_grant_required
             FROM strategy_evo_runs WHERE run_id=%s""",
             (_LEGACY_RUN,),
-        ).fetchone() == (None, None, False, False)
+        ).fetchone() == (
+            "aborted",
+            "EVOLUTION_UPGRADE_ABORTED",
+            None,
+            None,
+            False,
+            False,
+        )
+        assert conn.execute(
+            """SELECT stage,outcome,error_code FROM strategy_evo_candidates
+            WHERE candidate_id='40000000-0000-0000-0000-000000000001'"""
+        ).fetchone() == ("completed", "cancelled", "EVOLUTION_UPGRADE_ABORTED")
         conn.execute(
             "UPDATE strategy_evo_runs SET updated_at=NOW() WHERE run_id=%s",
             (_LEGACY_RUN,),
         )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                "UPDATE strategy_evo_runs SET status='queued' WHERE run_id=%s",
+                (_LEGACY_RUN,),
+            )
         validated = conn.execute(
             "SELECT convalidated FROM pg_constraint WHERE conname='evo_run_llm_snapshot_check'"
         ).fetchone()
@@ -95,6 +117,17 @@ def test_0041_preserves_old_rows_and_enforces_new_snapshots(
             FROM strategy_evo_runs WHERE run_id=%s""",
             (_VALID_RUN,),
         ).fetchone() == (True, True)
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                """UPDATE strategy_evo_runs
+                SET llm_credential_grant=NULL,llm_credential_grant_required=FALSE
+                WHERE run_id=%s""",
+                (_VALID_RUN,),
+            )
+        conn.execute(
+            """UPDATE strategy_evo_runs SET status='running' WHERE run_id=%s""",
+            (_VALID_RUN,),
+        )
         conn.execute(
             """UPDATE strategy_evo_runs
             SET llm_credential_grant=NULL,llm_credential_grant_required=FALSE

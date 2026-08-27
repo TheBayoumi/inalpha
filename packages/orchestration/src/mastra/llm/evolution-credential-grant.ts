@@ -6,7 +6,7 @@ import { SignJWT } from "jose";
 import type { EvolutionLLMSnapshot } from "./evolution-snapshot.js";
 
 const GRANT_AUDIENCE = "inalpha-dashboard-credential";
-const GRANT_TTL_SECONDS = 3_600;
+const GRANT_TTL_SECONDS = 30 * 60 * 60;
 
 /**
  * 为一次已审批的演化操作签发短效凭据 capability。

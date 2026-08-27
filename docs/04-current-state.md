@@ -200,11 +200,16 @@ seed / buy-and-hold / 全候选同数据哈希评估、owner 隔离、数据库�
 - 编排层在展示审批前冻结 `config_id/provider/model/base_url/pricing/version/最大单候选估算`，
   生成稳定 `config_digest` 和 operation id；批准后 5 分钟 JWT 同时绑定 owner、operation 与 digest。
 - Evolver 创建 run 时校验审批 JWT 与 snapshot digest，再持久化非密钥 `llm_snapshot`；数据库
-  check constraint 要求新写入具备完整快照，历史行不伪造元数据。
+  check constraint 要求新写入具备完整快照，升级前仍在 queued/running 的历史任务会显式
+  abort，避免在缺少冻结授权的情况下继续执行。
 - 批准后由 orchestration 用独立 Ed25519 私钥签发短时 credential grant，绑定 owner、operation、
   config 与 digest；Evolver 只转交、不能签发。Dashboard 用公钥验签并以 `jti` 在 PostgreSQL
-  一次性消费，再按 owner + config_id 即时解密 API key；队列中的 grant 兑换后立即清除，
+  记录并校验同 scope 的兑换；首次响应丢失时仅允许 2 分钟内补偿重试一次，再按 owner +
+  config_id 即时解密 API key；队列中的 grant
+  在成功兑换后立即清除，
   明文 key 不写入 snapshot、run/candidate、异常或日志。
+- credential grant 有效期 30 小时，queued 最长保留 24 小时；超时任务以
+  `EVOLUTION_QUEUE_TIMEOUT` 显式 abort，不会等到执行时才因凭据过期失败。
 - 演化只接受每家已有冻结价格条目的精确模型；未知模型 fail closed。DeepSeek 官方
   `https://api.deepseek.com` 与 `/v1` alias 统一规范化，不会误判为自定义代理。
 - 输入 prompt 以 UTF-8 字节数保守约束在冻结 input token 上限内，输出 token 同样硬限制；

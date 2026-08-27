@@ -55,19 +55,12 @@ async def execute_managed(
         )
     except CredentialTemporarilyUnavailable:
         await asyncio.sleep(2.0)
-        async with get_conn() as conn:
-            await runs.transition(
-                conn,
-                run["run_id"],
-                from_statuses=("running",),
-                to_status="queued",
-                values={
-                    "active_stage": None,
-                    "started_at": None,
-                    "failure_code": None,
-                    "failure_message": None,
-                },
-            )
+        await _requeue(
+            run["run_id"],
+            should_stop=should_stop,
+            on_error=on_error,
+            on_success=on_success,
+        )
     except Exception as exc:
         await _finalize(
             run["run_id"],
@@ -130,6 +123,42 @@ async def _finalize(
 
 class _RunTimeoutError(TimeoutError):
     code = "EVOLUTION_RUN_TIMEOUT"
+
+
+async def _requeue(
+    run_id: UUID,
+    *,
+    should_stop: Callable[[], bool],
+    on_error: Callable[[str], None],
+    on_success: Callable[[], None],
+) -> None:
+    """凭据依赖暂不可用时重试状态写入，避免 run 永久卡在 running。"""
+    delay = 0.1
+    while True:
+        try:
+            async with get_conn() as conn:
+                await runs.transition(
+                    conn,
+                    run_id,
+                    from_statuses=("running",),
+                    to_status="queued",
+                    values={
+                        "active_stage": None,
+                        "started_at": None,
+                        "failure_code": None,
+                        "failure_message": None,
+                    },
+                )
+            on_success()
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            on_error(f"requeue {run_id} failed: {type(exc).__name__}: {exc}")
+            if should_stop():
+                return
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 5.0)
 
 
 __all__ = ["execute_managed"]

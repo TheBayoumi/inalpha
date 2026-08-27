@@ -66,11 +66,15 @@ async def test_temporary_credential_failure_requeues_without_terminal_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transitions: list[dict[str, object]] = []
+    unhealthy: list[str] = []
 
     async def unavailable(*_args, **_kwargs):
         raise CredentialTemporarilyUnavailable("dashboard starting")
 
     async def transition(*_args, **kwargs):
+        if not transitions:
+            transitions.append({"failed_attempt": True})
+            raise RuntimeError("db temporarily unavailable")
         transitions.append(kwargs)
         return {}
 
@@ -87,15 +91,16 @@ async def test_temporary_credential_failure_requeues_without_terminal_failure(
         mutator=None,
         settings=SimpleNamespace(evolver_run_timeout_s=10),
         should_stop=lambda: False,
-        on_error=lambda _reason: None,
+        on_error=unhealthy.append,
         on_success=lambda: None,
     )
 
-    assert len(transitions) == 1
-    assert transitions[0]["to_status"] == "queued"
-    assert transitions[0]["values"] == {
+    assert len(transitions) == 2
+    assert transitions[1]["to_status"] == "queued"
+    assert transitions[1]["values"] == {
         "active_stage": None,
         "started_at": None,
         "failure_code": None,
         "failure_message": None,
     }
+    assert unhealthy and "db temporarily unavailable" in unhealthy[0]

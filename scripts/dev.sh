@@ -139,6 +139,7 @@ start_service() {
     local name="$1"
     local cwd="$2"
     local cmd="$3"
+    local allow_credential_signing="${4:-0}"
     local log="${LOG_DIR}/${name}.log"
     local pid_file="${PID_DIR}/${name}.pid"
 
@@ -150,6 +151,9 @@ start_service() {
     echo "[up]   $name → $log"
     (
         cd "$cwd"
+        if [[ "$allow_credential_signing" != "1" ]]; then
+            unset EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64
+        fi
         # shellcheck disable=SC2086
         nohup $cmd >"$log" 2>&1 &
         echo $! > "$pid_file"
@@ -318,7 +322,8 @@ case "$CMD" in
             "uv run uvicorn inalpha_evolver.main:app --host 127.0.0.1 --port 8005 --reload"
         start_service "orchestration" \
             "${ROOT}/packages/orchestration" \
-            "pnpm dev"
+            "pnpm dev" \
+            "1"
 
         if (( NO_WAIT == 1 )); then
             echo ""

@@ -77,7 +77,7 @@ class Mutator:
     max_fuzz: int = 3
     input_usd_per_million: float | None = None
     output_usd_per_million: float | None = None
-    max_input_tokens: int = 24_000
+    max_input_utf8_bytes: int = 24_000
     max_output_tokens: int = 8192
 
     def __post_init__(self) -> None:
@@ -88,8 +88,8 @@ class Mutator:
             raise ValueError("pricing rates must be positive")
         if self.max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be positive")
-        if self.max_input_tokens <= 0:
-            raise ValueError("max_input_tokens must be positive")
+        if self.max_input_utf8_bytes <= 0:
+            raise ValueError("max_input_utf8_bytes must be positive")
 
     async def mutate(
         self,
@@ -113,8 +113,8 @@ class Mutator:
         """
         user_prompt = build_user_prompt(current_source, report, hint)
         prompt_bytes = len(SYSTEM_PROMPT.encode()) + len(user_prompt.encode())
-        if prompt_bytes > self.max_input_tokens:
-            raise LLMError("LLM 变异输入超过已审批上限；请缩短种子策略或回测摘要后重新审批")
+        if prompt_bytes > self.max_input_utf8_bytes:
+            raise LLMError("LLM 变异输入超过已审批上限（按 UTF-8 字节保守校验）；请缩短输入")
         request = MutationRequest(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,

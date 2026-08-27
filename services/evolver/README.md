@@ -49,7 +49,7 @@ Dashboard / orchestration
 | `evaluator/` | frozen dataset 回测、子进程资源限制与 fitness |
 | `runtime/` | 异步 dispatcher、slot 并发、取消、超时与终态收口 |
 | `storage/` | PostgreSQL run/candidate 持久化与 owner-scoped 查询 |
-| `owner_llm.py` | 转交短时、逐操作且一次性消费的 credential grant，读取 owner 模型配置 |
+| `owner_llm.py` | 转交短时、逐操作且同 scope 可重试的 credential grant，读取 owner 模型配置 |
 
 ## HTTP API
 
@@ -85,6 +85,7 @@ Dashboard / orchestration
 | `EVOLVER_POOL_SIZE` | PostgreSQL 连接池大小 |
 | `EVOLVER_MAX_RUNNING_RUNS` | 服务级同时运行上限 |
 | `EVOLVER_ACCOUNT_ACTIVE_LIMIT` | 单 owner active run 上限 |
+| `EVOLVER_QUEUE_TIMEOUT_S` | queued 最长等待（默认 24 小时，超时显式 abort；短于 grant 的 30 小时 TTL） |
 | `EVOLVER_JOB_TIMEOUT_S` / `EVOLVER_RUN_TIMEOUT_S` | 单候选与整次 run 超时 |
 | `EVOLVER_JOB_MEM_GB` | 回测子进程内存上限 |
 | `EVOLVER_LLM_TIMEOUT_S` | 单次 LLM 变异超时 |

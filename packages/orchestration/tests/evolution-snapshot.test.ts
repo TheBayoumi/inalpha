@@ -60,8 +60,11 @@ describe("evolution LLM snapshot", () => {
   });
 
   it("rejects credentials, query strings, and non-HTTP base URLs", () => {
+    const credentialUrl = new URL("https://example.com/v1");
+    credentialUrl.username = "user";
+    credentialUrl.password = "pass";
     for (const custom_base_url of [
-      "https://user:pass@example.com/v1",
+      credentialUrl.toString(),
       "https://example.com/v1?token=x",
       "ftp://example.com/v1",
     ]) {

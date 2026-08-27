@@ -233,7 +233,7 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 | ✅ Shipped | Research → strategy → backtest lineage | D-8c | `deep_dive → compose_strategy → run_backtest` with `research_id` / `backtest_id` threaded through |
 | ✅ Shipped | LLM-authored strategies — E1 MVP | D-9 | three sandbox gates (AST · subprocess · `Strategy` contract) + multi-objective fitness + baseline auto-run |
 | ✅ Shipped | Strategy evolution — E1 production loop | E1 | `services/evolver:8005` · explicit cost-bearing approval · unified-diff mutation · frozen dataset/hash · seed/baseline/candidates evaluated on the same bars · owner-scoped async run/slot state |
-| ✅ Shipped | Frozen LLM approval snapshot | E1 closure | Dashboard approve/deny · owner/operation/model/pricing binding · Ed25519 one-time credential grant · per-slot token/cost accounting, including rejected mutations |
+| ✅ Shipped | Frozen LLM approval snapshot | E1 closure | Dashboard approve/deny · owner/operation/model/pricing binding · Ed25519 replay-safe credential grant · per-slot token/cost accounting, including rejected mutations |
 | ✅ Shipped | Risk engine at the HTTP boundary | D-9 | declarative `risk_rules.toml` · pre-trade `enforce` · `risk_locks` table with independent commit |
 | ✅ Shipped | Bull / bear researcher debate | D-9 | opposing-stance researchers under `services/research` |
 | ✅ Shipped | Scheduler / cron agent mode | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` management plane |
@@ -403,8 +403,9 @@ and an `en / 中` switcher in the sidebar.
 > The orchestrator and an explicitly approved `services/evolver` run can consume your owner-scoped
 > LLM key; `services/research` currently uses the deployment-level provider/key, and
 > `services/paper` never calls an LLM directly. Evolver resolves the encrypted credential just in
-> time through an owner/operation-bound, one-time credential grant and stores only the frozen
-> non-secret config/pricing snapshot after that grant is consumed.
+> time through an owner/operation-bound credential grant. A lost response permits one exact-scope
+> retry within two minutes; the queued grant is cleared after a successful exchange, and only the frozen
+> non-secret config/pricing snapshot remains.
 > Prefer the manual multi-terminal flow, or want the low-level live
 > trace (the `mastra dev` playground at <http://127.0.0.1:4111>)? See [`AGENTS.md §4`](AGENTS.md).
 

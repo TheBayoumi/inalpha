@@ -27,7 +27,7 @@ async function token(
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1_000);
   let builder = new SignJWT({
-    token_use: "evolver_credential",
+    token_use: "evolution_credential",
     config_id: "config-1",
     provider: "deepseek",
     operation_id: "operation-1",
@@ -57,6 +57,7 @@ async function callRoute(authorization?: string, id = "config-1") {
 beforeEach(() => {
   vi.stubEnv("EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64", PUBLIC_KEY_B64);
   mockedDecryptUserApiKey.mockReset();
+  mockedGetPool.mockReset();
   mockedGetPool.mockReturnValue({
     query: vi.fn().mockResolvedValue({ rowCount: 1 }),
   } as never);
@@ -76,7 +77,7 @@ describe("internal owner LLM credential route", () => {
     const requests = [
       callRoute(`Bearer ${await token({ token_use: "session" })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: null })}`),
-      callRoute(`Bearer ${await token({}, { issuedAt: now - 3_700, expiresAt: now + 1 })}`),
+      callRoute(`Bearer ${await token({}, { issuedAt: now - 108_100, expiresAt: now + 1 })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: now + 60, expiresAt: now + 120 })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: now - 20, expiresAt: now - 10 })}`),
       callRoute(`Bearer ${await token({}, { otherKey: true })}`),
@@ -93,9 +94,10 @@ describe("internal owner LLM credential route", () => {
     expect(mockedDecryptUserApiKey).not.toHaveBeenCalled();
   });
 
-  it("consumes each signed credential grant only once", async () => {
+  it("allows one exact-scope replay for a lost response, then rejects the grant", async () => {
     const query = vi
       .fn()
+      .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 1 })
       .mockResolvedValueOnce({ rowCount: 0 });
     mockedGetPool.mockReturnValue({ query } as never);
@@ -107,8 +109,22 @@ describe("internal owner LLM credential route", () => {
     const grant = await token();
 
     expect((await callRoute(`Bearer ${grant}`)).status).toBe(200);
+    expect((await callRoute(`Bearer ${grant}`)).status).toBe(200);
     expect((await callRoute(`Bearer ${grant}`)).status).toBe(409);
-    expect(mockedDecryptUserApiKey).toHaveBeenCalledTimes(1);
+    expect(mockedDecryptUserApiKey).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a reused jti whose recorded scope differs", async () => {
+    mockedGetPool.mockReturnValue({
+      query: vi.fn().mockResolvedValue({ rowCount: 0 }),
+    } as never);
+    mockedDecryptUserApiKey.mockResolvedValue({
+      id: "config-1",
+      provider: "deepseek",
+      api_key: "owner-key",
+    } as never);
+
+    expect((await callRoute(`Bearer ${await token()}`)).status).toBe(409);
   });
 
   it("returns only the requested owner's decrypted config without caching", async () => {
@@ -143,5 +159,12 @@ describe("internal owner LLM credential route", () => {
     mockedDecryptUserApiKey.mockResolvedValue(null);
 
     expect((await callRoute(`Bearer ${await token()}`)).status).toBe(404);
+  });
+
+  it("returns a retryable error when the encrypted credential store is unavailable", async () => {
+    mockedDecryptUserApiKey.mockRejectedValue(new Error("database unavailable"));
+
+    expect((await callRoute(`Bearer ${await token()}`)).status).toBe(503);
+    expect(mockedGetPool).not.toHaveBeenCalled();
   });
 });

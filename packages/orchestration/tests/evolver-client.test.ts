@@ -90,7 +90,7 @@ describe("EvolverClient", () => {
       operation_id: "approval-operation-1",
       llm_config_digest: snapshot.config_digest,
     });
-    expect(Number(credential.exp) - Number(credential.iat)).toBe(3_600);
+    expect(Number(credential.exp) - Number(credential.iat)).toBe(108_000);
   });
 
   it("retries 502/504 with the same approval-derived operation ID", async () => {
