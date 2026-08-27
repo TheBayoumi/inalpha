@@ -16,8 +16,10 @@ Inalpha 的动态 Next.js 控制台（`:3001`）：提供 agent 对话，以及�
 JWT 并访问 data/paper/research/factor/evolver/Mastra；Python services 不直接暴露给浏览器。
 
 用户级 LLM provider/model/key 在服务端管理，key 以 `LLM_CONFIG_ENCRYPTION_KEY`（未配置时
-兼容回退 `JWT_SECRET`）加密保存。Evolver 执行时只可凭短时、用途限定且绑定 `config_id` 的 service JWT，
-经 `/api/internal/llm-config/{id}` 按 owner 即时读取；明文 key 不进入 run/candidate 记录。
+兼容回退 `JWT_SECRET`）加密保存。Evolver 执行时只能转交由 orchestration 签发、绑定
+owner / operation / `config_id` / digest 的短时 Ed25519 grant；Dashboard 用公钥验签并通过
+PostgreSQL `jti` 兑换记录限制重放，再经 `/api/internal/llm-config/{id}` 按 owner 即时读取。
+明文 key 不进入 run/candidate 记录，grant 成功兑换后从运行队列清除。
 
 ## 本地启动
 
@@ -46,6 +48,7 @@ pnpm dev                     # http://localhost:3001
 | `AUTH_ENABLED` | 是否启用登录闸门 |
 | `JWT_SECRET` / `JWT_ALGORITHM` | 用户/服务 JWT |
 | `LLM_CONFIG_ENCRYPTION_KEY` | 用户 LLM API key 的独立加密密钥 |
+| `EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64` | 验证 Evolver owner 凭据 grant 的 Ed25519 公钥 |
 | `DATA_SERVICE_URL` … `EVOLVER_SERVICE_URL` | 五个 Python service 地址 |
 | `MASTRA_URL` | agent 编排地址 |
 | `EVOLVER_ENABLED` | 是否显示并开放演化能力 |

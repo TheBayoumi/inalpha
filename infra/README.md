@@ -10,6 +10,9 @@ bash scripts/selfhost.sh up
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
+`init` 会生成数据库、JWT、配置加密密钥，以及 Evolver credential grant 所需的
+Ed25519 公私钥。生成后的 `infra/.env.selfhost` 权限为 `600`，不要提交到仓库。
+
 完整栈包含 PostgreSQL、Redis、migration、五个 Python services（data / paper / research /
 factor / evolver）、Mastra 与 Dashboard。Dashboard 只绑定宿主机 `127.0.0.1:3001`；远程访问
 应由部署者的 Caddy、Nginx 或 Tunnel 提供 HTTPS，并只代理 Dashboard。用户级 LLM key、

@@ -138,8 +138,10 @@ E2 best-parent 多代选择与 early stopping（issue #7），MAP-Elites / Islan
 - ❌ 不在 `services/_shared/` 加项目特有逻辑（破坏复用）
 - ❌ 不写跳过测试 / 跳过 hook 的 commit（`--no-verify` 等）——遇阻先 ask user
 - ❌ 不在不公开源码的前提下把 Inalpha（或其修改版）当作网络服务对外提供（LICENSE: AGPL-3.0；需闭源 / 托管 SaaS 请提 issue 谈双重许可）
-- ❌ 不绕过逐用户 JWT、owner scope 或 `LLM_CONFIG_ENCRYPTION_KEY`：Evolver 只能用短时、
-  用途限定且绑定 `config_id` 的 service JWT 即时获取当前 owner 的模型密钥，严禁把明文 API key 写入运行记录或日志
+- ❌ 不绕过逐用户 JWT、owner scope 或 `LLM_CONFIG_ENCRYPTION_KEY`：Evolver 只能转交由
+  orchestration 签发、绑定 owner / operation / `config_id` / digest 的短时 Ed25519 grant，
+  由 Dashboard 公钥验签并兑换当前 owner 的模型密钥；首次响应丢失时只允许两分钟内补偿
+  重试一次。严禁把明文 API key 写入运行记录或日志
 
 ---
 
