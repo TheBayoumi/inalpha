@@ -73,6 +73,7 @@ export class EvolverClient {
     config: EvolutionConfig;
     idempotencyKey: string;
     approvalToken: string;
+    credentialGrant: string;
     llmSnapshot: EvolutionLLMSnapshot;
   }): Promise<RunStatusResult> {
     const body = {
@@ -84,6 +85,7 @@ export class EvolverClient {
     const headers = {
       "Idempotency-Key": options.idempotencyKey,
       "X-Evolution-Approval": options.approvalToken,
+      "X-Evolution-Credential": options.credentialGrant,
     };
     try {
       return await this.http.post<RunStatusResult>("/api/v1/runs", body, headers);

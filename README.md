@@ -233,7 +233,7 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 | ✅ Shipped | Research → strategy → backtest lineage | D-8c | `deep_dive → compose_strategy → run_backtest` with `research_id` / `backtest_id` threaded through |
 | ✅ Shipped | LLM-authored strategies — E1 MVP | D-9 | three sandbox gates (AST · subprocess · `Strategy` contract) + multi-objective fitness + baseline auto-run |
 | ✅ Shipped | Strategy evolution — E1 production loop | E1 | `services/evolver:8005` · explicit cost-bearing approval · unified-diff mutation · frozen dataset/hash · seed/baseline/candidates evaluated on the same bars · owner-scoped async run/slot state |
-| ⏭️ In flight | Frozen LLM approval snapshot | E1 closure | approval binds owner + operation ID + model/pricing digest · encrypted owner credential resolved just-in-time · per-slot token/cost accounting, including rejected mutations |
+| ✅ Shipped | Frozen LLM approval snapshot | E1 closure | Dashboard approve/deny · owner/operation/model/pricing binding · Ed25519 one-time credential grant · per-slot token/cost accounting, including rejected mutations |
 | ✅ Shipped | Risk engine at the HTTP boundary | D-9 | declarative `risk_rules.toml` · pre-trade `enforce` · `risk_locks` table with independent commit |
 | ✅ Shipped | Bull / bear researcher debate | D-9 | opposing-stance researchers under `services/research` |
 | ✅ Shipped | Scheduler / cron agent mode | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` management plane |
@@ -348,6 +348,12 @@ Defaults pick each vendor's **current flagship** as of 2026-05. Override with `L
 
 Override the default model by setting `LLM_MODEL=...` in the same file. Mastra and `services/research` both read this one file — no per-service config to juggle.
 
+If you want to run Evolver, also generate its Ed25519 credential-grant keypair and place the DER
+base64 values in `EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64` / `EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64`.
+The exact commands are in [`services/evolver/README.md`](services/evolver/README.md). Evolution is
+fail-closed without these keys and currently accepts only the priced default model for each of
+DeepSeek, OpenAI, Kimi, and Zhipu; ordinary chat can still use other models or custom proxies.
+
 > Already have keys in `services/*/.env` or `packages/orchestration/.env` from earlier? Those still work as cwd-level overrides while you migrate. Once you copy them up into the root `.env`, the per-service files can be deleted.
 
 **Optional · FRED key for macro factors.** The factor library's macro factors (`macro.*` — rates, term & credit spreads, CPI, payrolls, real-economy, sentiment) read FRED data via `venue=fred`. Set `FRED_API_KEY` in `.env` to enable them — it's [free and instant](https://fred.stlouisfed.org/docs/api/api_key.html). Without a key the connector simply isn't registered and macro factors degrade gracefully (price/volume factors are unaffected). Note: macro factors are computed **only at `timeframe=1d/1wk`** — they're filtered out on intraday bars (monthly series would be a step function), so request `1d` to see them.
@@ -386,7 +392,7 @@ pnpm i           # first time only
 pnpm dev         # → http://localhost:3001
 ```
 
-No extra config — the console reads the repo-root `.env` directly (backend URLs + `JWT_SECRET`
+No per-app config — the console reads the repo-root `.env` directly (backend URLs + `JWT_SECRET`
 are inherited), so as long as the services from step 4 are up, it just connects. It ships with
 **dark / light themes** (a terminal "Vermilion" aesthetic — see [`apps/dashboard/design.md`](apps/dashboard/design.md))
 and an `en / 中` switcher in the sidebar.
@@ -397,7 +403,8 @@ and an `en / 中` switcher in the sidebar.
 > The orchestrator and an explicitly approved `services/evolver` run can consume your owner-scoped
 > LLM key; `services/research` currently uses the deployment-level provider/key, and
 > `services/paper` never calls an LLM directly. Evolver resolves the encrypted credential just in
-> time and stores only the frozen non-secret config/pricing snapshot.
+> time through an owner/operation-bound, one-time credential grant and stores only the frozen
+> non-secret config/pricing snapshot after that grant is consumed.
 > Prefer the manual multi-terminal flow, or want the low-level live
 > trace (the `mastra dev` playground at <http://127.0.0.1:4111>)? See [`AGENTS.md §4`](AGENTS.md).
 

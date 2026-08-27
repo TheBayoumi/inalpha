@@ -22,6 +22,33 @@ describe("evolution LLM snapshot", () => {
     expect(computeEvolutionLLMConfigDigest(snapshot)).toBe(snapshot.config_digest);
   });
 
+  it.each([
+    ["openai", "gpt-5.5", 5, 15],
+    ["kimi", "kimi-k2.6", 0.6, 2.5],
+    ["zhipu", "glm-5.2", 0.7, 2.8],
+  ] as const)(
+    "freezes the default model, pricing, and digest for %s",
+    (provider, model, inputRate, outputRate) => {
+      const snapshot = buildEvolutionLLMSnapshot({
+        id: `config-${provider}`,
+        provider,
+        api_key: "must-not-be-copied",
+      });
+
+      expect(snapshot).toMatchObject({
+        provider,
+        model,
+        pricing: {
+          input_usd_per_million: inputRate,
+          output_usd_per_million: outputRate,
+        },
+      });
+      expect(snapshot.config_digest).toMatch(/^[a-f0-9]{64}$/);
+      expect(computeEvolutionLLMConfigDigest(snapshot)).toBe(snapshot.config_digest);
+      expect(JSON.stringify(snapshot)).not.toContain("must-not-be-copied");
+    },
+  );
+
   it("fails closed for providers the Python runtime cannot execute", () => {
     expect(() =>
       buildEvolutionLLMSnapshot({
@@ -47,5 +74,45 @@ describe("evolution LLM snapshot", () => {
         }),
       ).toThrow();
     }
+  });
+
+  it("rejects custom proxy and private-network endpoints for evolution", () => {
+    for (const custom_base_url of [
+      "https://proxy.example.com/v1",
+      "http://127.0.0.1:8080/v1",
+      "http://169.254.169.254/latest/meta-data",
+    ]) {
+      expect(() =>
+        buildEvolutionLLMSnapshot({
+          id: "config-4",
+          provider: "openai",
+          api_key: "test-key",
+          custom_base_url,
+        }),
+      ).toThrow("official openai API endpoint");
+    }
+  });
+
+  it("canonicalizes DeepSeek's documented /v1 alias", () => {
+    const snapshot = buildEvolutionLLMSnapshot({
+      id: "config-deepseek-v1",
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+      api_key: "test-key",
+      custom_base_url: "https://api.deepseek.com/v1",
+    });
+
+    expect(snapshot.base_url).toBe("https://api.deepseek.com");
+  });
+
+  it("rejects models without a frozen, model-specific pricing entry", () => {
+    expect(() =>
+      buildEvolutionLLMSnapshot({
+        id: "config-unpriced",
+        provider: "openai",
+        model: "gpt-unknown-expensive",
+        api_key: "test-key",
+      }),
+    ).toThrow("pricing is unavailable for model");
   });
 });

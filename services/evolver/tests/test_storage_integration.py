@@ -46,6 +46,7 @@ async def test_run_idempotency_owner_scope_and_slot() -> None:
             "budget": 2,
             "config": config,
             "llm_snapshot": llm_snapshot(),
+            "llm_credential_grant": "signed-grant-" + "x" * 120,
             "queued_at": now,
         }
         async with get_conn() as conn:

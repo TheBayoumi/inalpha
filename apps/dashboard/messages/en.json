@@ -249,7 +249,13 @@
     },
     "empty": "No activity yet.",
     "emptyFiltered": "No {kind} events.",
-    "sourceDown": "{sources} unavailable — those events are missing from the feed.",
+  "sourceDown": "{sources} unavailable — those events are missing from the feed.",
+  "approval": {
+    "allow": "Approve",
+    "deny": "Deny",
+    "failed": "Retry",
+    "working": "Saving…"
+  },
     "source": {
       "scheduler": "Scheduler",
       "permissions": "Approvals",

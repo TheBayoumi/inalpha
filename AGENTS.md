@@ -48,6 +48,8 @@ done
 # 配置统一 .env（所有 service 共享根目录一份 .env）
 cp .env.example .env                    # 在 .env 里填 LLM_PROVIDER + 对应 *_API_KEY
                                         # 详见 README.md §Quick Start 的 provider/model 表
+                                        # 运行 Evolver 还需生成 Ed25519 grant 公私钥
+                                        # 见 services/evolver/README.md §配置与启动
 
 # 启动开发 DB 并把 schema 升到最新（dev.sh 不会自动做这两步）
 cp infra/.env.example infra/.env         # 与根 .env.example 的 DB 默认值一致

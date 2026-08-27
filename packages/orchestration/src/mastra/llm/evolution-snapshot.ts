@@ -13,11 +13,14 @@ const MAX_OUTPUT_TOKENS = 8_192;
 export const EVOLUTION_LLM_PROVIDERS = ["deepseek", "openai", "kimi", "zhipu"] as const;
 export type EvolutionLLMProvider = (typeof EVOLUTION_LLM_PROVIDERS)[number];
 
-const RATES: Record<EvolutionLLMProvider, readonly [number, number]> = {
-  deepseek: [0.56, 1.68],
-  openai: [5, 15],
-  kimi: [0.6, 2.5],
-  zhipu: [0.7, 2.8],
+const PRICED_MODELS: Record<
+  EvolutionLLMProvider,
+  Readonly<{ model: string; rates: readonly [number, number] }>
+> = {
+  deepseek: { model: "deepseek-v4-pro", rates: [0.56, 1.68] },
+  openai: { model: "gpt-5.5", rates: [5, 15] },
+  kimi: { model: "kimi-k2.6", rates: [0.6, 2.5] },
+  zhipu: { model: "glm-5.2", rates: [0.7, 2.8] },
 };
 
 export type EvolutionPricingSnapshot = {
@@ -45,23 +48,35 @@ export function buildEvolutionLLMSnapshot(config: UserLLMConfig): EvolutionLLMSn
     throw new Error(`evolution pricing is unavailable for provider ${config.provider}`);
   }
   const provider = config.provider;
-  const rates = RATES[provider];
+  const priced = PRICED_MODELS[provider];
   const model =
     config.model?.trim() || DEFAULT_MODELS[provider as keyof typeof DEFAULT_MODELS];
   if (!model) throw new Error(`evolution model is unavailable for provider ${provider}`);
-  const baseUrl = sanitizeBaseUrl(
+  if (model !== priced.model) {
+    throw new Error(`evolution pricing is unavailable for model ${provider}/${model}`);
+  }
+  const baseUrl = normalizeProviderBaseUrl(
+    provider,
     config.custom_base_url || PROVIDER_BASE_URLS[provider] || null,
   );
+  const officialBaseUrl = normalizeProviderBaseUrl(
+    provider,
+    PROVIDER_BASE_URLS[provider] || null,
+  );
+  if (baseUrl !== officialBaseUrl) {
+    throw new Error(`evolution requires the official ${provider} API endpoint`);
+  }
   const pricing: EvolutionPricingSnapshot = {
     version: PRICING_VERSION,
     currency: "USD",
-    input_usd_per_million: rates[0],
-    output_usd_per_million: rates[1],
+    input_usd_per_million: priced.rates[0],
+    output_usd_per_million: priced.rates[1],
     assumed_input_tokens: ASSUMED_INPUT_TOKENS,
     max_output_tokens: MAX_OUTPUT_TOKENS,
     estimated_max_usd_per_candidate: Number(
       (
-        (ASSUMED_INPUT_TOKENS * rates[0] + MAX_OUTPUT_TOKENS * rates[1]) /
+        (ASSUMED_INPUT_TOKENS * priced.rates[0] +
+          MAX_OUTPUT_TOKENS * priced.rates[1]) /
         1_000_000
       ).toFixed(12),
     ),
@@ -135,6 +150,18 @@ function sanitizeBaseUrl(value: string | null): string | null {
     throw new Error("LLM base URL cannot contain credentials, query, or fragment");
   }
   return url.toString().replace(/\/$/, "");
+}
+
+/** Canonicalizes documented aliases without accepting arbitrary proxy paths. */
+function normalizeProviderBaseUrl(
+  provider: EvolutionLLMProvider,
+  value: string | null,
+): string | null {
+  const sanitized = sanitizeBaseUrl(value);
+  if (provider === "deepseek" && sanitized === "https://api.deepseek.com/v1") {
+    return "https://api.deepseek.com";
+  }
+  return sanitized;
 }
 
 function isEvolutionLLMProvider(value: string): value is EvolutionLLMProvider {

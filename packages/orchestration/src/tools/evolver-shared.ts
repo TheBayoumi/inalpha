@@ -11,6 +11,7 @@ import {
   USER_LLM_SNAPSHOT_KEY,
   type EvolutionLLMSnapshot,
 } from "../mastra/llm/evolution-snapshot.js";
+import { mintEvolutionCredentialGrant } from "../mastra/llm/evolution-credential-grant.js";
 
 export type ToolRequestContext = { authToken?: string; get?: (key: string) => unknown };
 
@@ -28,6 +29,7 @@ export async function getApprovedEvolutionRunContext(
   client: EvolverClient;
   operationId: string;
   approvalToken: string;
+  credentialGrant: string;
   llmSnapshot: EvolutionLLMSnapshot;
 }> {
   const operationId = getRequestContextValue<string>(
@@ -51,10 +53,16 @@ export async function getApprovedEvolutionRunContext(
     },
     300,
   );
+  const credentialGrant = await mintEvolutionCredentialGrant({
+    authSub,
+    operationId,
+    snapshot: llmSnapshot,
+  });
   return {
     client: await getEvolverClient(ctx),
     operationId,
     approvalToken,
+    credentialGrant,
     llmSnapshot,
   };
 }

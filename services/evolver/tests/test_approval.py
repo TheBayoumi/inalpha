@@ -15,18 +15,25 @@ _SECRET = "approval-unit-test-secret-at-least-32-bytes"
 _DIGEST = "a" * 64
 
 
-def _token(ttl_seconds: int) -> str:
+def _token(
+    ttl_seconds: int,
+    *,
+    overrides: dict[str, object] | None = None,
+    secret: str = _SECRET,
+) -> str:
     now = int(time.time())
+    payload: dict[str, object] = {
+        "sub": "user:alice",
+        "token_use": "evolution_approval",
+        "operation_id": "approval-operation-1",
+        "llm_config_digest": _DIGEST,
+        "iat": now,
+        "exp": now + ttl_seconds,
+    }
+    payload.update(overrides or {})
     return jwt.encode(
-        {
-            "sub": "user:alice",
-            "token_use": "evolution_approval",
-            "operation_id": "approval-operation-1",
-            "llm_config_digest": _DIGEST,
-            "iat": now,
-            "exp": now + ttl_seconds,
-        },
-        _SECRET,
+        payload,
+        secret,
         algorithm="HS256",
     )
 
@@ -67,3 +74,31 @@ def test_approval_rejects_another_owner() -> None:
     with pytest.raises(HTTPException) as error:
         _verify(token)
     assert error.value.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"token_use": "session"},
+        {"operation_id": "another-operation"},
+        {"llm_config_digest": "b" * 64},
+        {"iat": None},
+        {"exp": None},
+    ],
+)
+def test_approval_rejects_invalid_claims(overrides: dict[str, object]) -> None:
+    with pytest.raises(HTTPException) as error:
+        _verify(_token(300, overrides=overrides))
+    assert error.value.status_code in {401, 403}
+
+
+def test_approval_rejects_expired_bad_signature_and_non_positive_ttl() -> None:
+    tokens = [
+        _token(-1),
+        _token(300, secret="different-secret-at-least-32-bytes"),
+        _token(300, overrides={"iat": int(time.time()) + 300}),
+    ]
+    for token in tokens:
+        with pytest.raises(HTTPException) as error:
+            _verify(token)
+        assert error.value.status_code in {401, 403}

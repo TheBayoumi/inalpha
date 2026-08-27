@@ -15,6 +15,7 @@ from inalpha_evolver.api.schemas import (
     EvolutionLLMSnapshot,
     RunStatusResponse,
     StartRunRequest,
+    compute_llm_config_digest,
 )
 
 from .llm_snapshot_fixtures import VALID_LLM_SNAPSHOT, llm_snapshot
@@ -48,7 +49,6 @@ def test_request_hash_is_stable_and_payload_sensitive() -> None:
     ("path", "value"),
     [
         (("model",), "tampered-model"),
-        (("base_url",), "https://evil.example/v1"),
         (("pricing", "input_usd_per_million"), 0.01),
     ],
 )
@@ -62,8 +62,17 @@ def test_llm_snapshot_digest_rejects_tampering(
         target = target[key]
     target[path[-1]] = value
 
-    with pytest.raises(ValueError, match="config_digest"):
+    with pytest.raises(ValueError, match="pricing is unavailable"):
         EvolutionLLMSnapshot.model_validate(payload)
+
+
+def test_deepseek_official_v1_alias_is_canonicalized() -> None:
+    payload = llm_snapshot()
+    payload["base_url"] = "https://api.deepseek.com/v1"
+
+    snapshot = EvolutionLLMSnapshot.model_validate(payload)
+
+    assert snapshot.base_url == "https://api.deepseek.com"
 
 
 def test_llm_snapshot_digest_matches_typescript_contract() -> None:
@@ -75,6 +84,17 @@ def test_non_openai_compatible_provider_is_rejected() -> None:
     payload = llm_snapshot()
     payload["provider"] = "anthropic"
     with pytest.raises(ValueError):
+        EvolutionLLMSnapshot.model_validate(payload)
+
+
+def test_custom_or_private_llm_endpoint_is_rejected_even_with_matching_digest() -> None:
+    snapshot = EvolutionLLMSnapshot.model_validate(llm_snapshot()).model_copy(
+        update={"base_url": "http://169.254.169.254/latest/meta-data"}
+    )
+    payload = snapshot.model_dump()
+    payload["config_digest"] = compute_llm_config_digest(snapshot)
+
+    with pytest.raises(ValueError, match="official deepseek API endpoint"):
         EvolutionLLMSnapshot.model_validate(payload)
 
 

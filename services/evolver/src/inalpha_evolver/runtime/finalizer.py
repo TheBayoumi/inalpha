@@ -10,6 +10,7 @@ from uuid import UUID
 
 from inalpha_shared.db import get_conn
 
+from ..owner_llm import CredentialTemporarilyUnavailable
 from ..storage import candidates, runs
 from .executor import execute_run
 
@@ -52,6 +53,21 @@ async def execute_managed(
             on_error=on_error,
             on_success=on_success,
         )
+    except CredentialTemporarilyUnavailable:
+        await asyncio.sleep(2.0)
+        async with get_conn() as conn:
+            await runs.transition(
+                conn,
+                run["run_id"],
+                from_statuses=("running",),
+                to_status="queued",
+                values={
+                    "active_stage": None,
+                    "started_at": None,
+                    "failure_code": None,
+                    "failure_message": None,
+                },
+            )
     except Exception as exc:
         await _finalize(
             run["run_id"],

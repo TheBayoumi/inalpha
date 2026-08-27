@@ -1,7 +1,10 @@
 "use client";
 
+import { useState } from "react";
+
 import { useLocale, useNow, useTranslations } from "next-intl";
 import { ChevronRight, MessageSquare } from "lucide-react";
+import { useSWRConfig } from "swr";
 
 import type { ActivityEvent, ActivityTone } from "@/lib/types";
 import { Link } from "@/i18n/navigation";
@@ -31,7 +34,8 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
       {events.map((e) => {
         // 会话事件可点 → 打开右侧对话栏并切到该会话(与底部日志同款交互)。
         const isConversation = e.kind === "conversation";
-        const clickable = isConversation || Boolean(e.href);
+        const hasApproval = Boolean(e.approvalRequestId);
+        const clickable = isConversation || (Boolean(e.href) && !hasApproval);
         const row = (
           <div
             className={cn(
@@ -82,6 +86,8 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
 
             {isConversation ? (
               <MessageSquare className="mt-0.5 size-4 shrink-0 text-fg-muted/30 group-hover:text-seal" />
+            ) : hasApproval ? (
+              <ApprovalActions requestId={e.approvalRequestId!} />
             ) : (
               e.href && (
                 <ChevronRight className="mt-0.5 size-4 shrink-0 text-fg-muted/30 group-hover:text-cyan/70" />
@@ -107,7 +113,7 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
               >
                 {row}
               </button>
-            ) : e.href ? (
+            ) : e.href && !hasApproval ? (
               <Link href={e.href} className="group block">
                 {row}
               </Link>
@@ -118,5 +124,52 @@ export function ActivityFeed({ events }: { events: ActivityEvent[] }) {
         );
       })}
     </ul>
+  );
+}
+
+function ApprovalActions({ requestId }: { requestId: string }) {
+  const t = useTranslations("activity.approval");
+  const { mutate } = useSWRConfig();
+  const [submitting, setSubmitting] = useState<"allow" | "deny" | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const respond = async (decision: "allow" | "deny") => {
+    setSubmitting(decision);
+    setFailed(false);
+    try {
+      const response = await fetch(`/api/permissions/${encodeURIComponent(requestId)}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      });
+      if (!response.ok) throw new Error(`approval failed (${response.status})`);
+      await mutate("/api/activity");
+    } catch {
+      setFailed(true);
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      {failed && <span className="font-mono text-[10px] text-fox-red">{t("failed")}</span>}
+      <button
+        type="button"
+        disabled={submitting !== null}
+        onClick={() => void respond("deny")}
+        className="rounded-md border border-fox-red/35 px-2 py-1 font-mono text-[10px] uppercase text-fox-red disabled:opacity-40"
+      >
+        {submitting === "deny" ? t("working") : t("deny")}
+      </button>
+      <button
+        type="button"
+        disabled={submitting !== null}
+        onClick={() => void respond("allow")}
+        className="rounded-md border border-bull/35 bg-bull/10 px-2 py-1 font-mono text-[10px] uppercase text-bull disabled:opacity-40"
+      >
+        {submitting === "allow" ? t("working") : t("allow")}
+      </button>
+    </div>
   );
 }

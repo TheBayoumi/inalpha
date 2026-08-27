@@ -29,6 +29,7 @@ def _headers(key: str | None = None, *, include_approval: bool = True) -> dict[s
     headers = {"Authorization": f"Bearer {token}"}
     if key:
         headers["Idempotency-Key"] = key
+        headers["X-Evolution-Credential"] = "signed-grant-" + "x" * 120
         if include_approval:
             headers["X-Evolution-Approval"] = approval_token(
                 subject=subject,

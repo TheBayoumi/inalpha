@@ -35,6 +35,10 @@ async def start_run(
         str,
         Header(alias="X-Evolution-Approval", min_length=20, max_length=4096),
     ],
+    evolution_credential: Annotated[
+        str,
+        Header(alias="X-Evolution-Credential", min_length=100, max_length=4096),
+    ],
 ) -> RunStatusResponse:
     owner = account_id_from_user(user)
     settings = get_evolver_settings()
@@ -62,6 +66,7 @@ async def start_run(
             budget=body.budget,
             config=config,
             llm_snapshot=body.llm.model_dump(mode="json"),
+            llm_credential_grant=evolution_credential,
             queued_at=datetime.now(UTC),
         )
         if not created and row["request_hash"] != request_hash:

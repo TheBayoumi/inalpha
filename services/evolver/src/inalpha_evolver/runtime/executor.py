@@ -80,6 +80,8 @@ async def _run_mutator(
         yield injected
         return
     owner_mutator = await build_owner_mutator(run, settings)
+    async with get_conn() as conn:
+        await runs.clear_credential_grant(conn, run["run_id"])
     try:
         yield owner_mutator
     finally:

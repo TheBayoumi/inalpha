@@ -1,3 +1,6 @@
+import { generateKeyPairSync } from "node:crypto";
+
+import { jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { verifyToken } from "../src/auth.js";
@@ -42,16 +45,23 @@ function options() {
     },
     idempotencyKey: "approval-operation-1",
     approvalToken: "approval-token",
+    credentialGrant: "credential-grant",
     llmSnapshot: snapshot,
   };
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("EvolverClient", () => {
   it("mints a short-lived approval JWT bound to owner, operation, and snapshot", async () => {
+    const keys = generateKeyPairSync("ed25519");
+    vi.stubEnv(
+      "EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64",
+      keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"),
+    );
     const requestContext = new Map<string, unknown>([
       [AUTH_SUB_KEY, "user:alice"],
       [APPROVAL_OPERATION_ID_KEY, "approval-operation-1"],
@@ -60,6 +70,11 @@ describe("EvolverClient", () => {
 
     const approved = await getApprovedEvolutionRunContext(requestContext);
     const payload = await verifyToken(approved.approvalToken);
+    const { payload: credential } = await jwtVerify(
+      approved.credentialGrant,
+      keys.publicKey,
+      { algorithms: ["EdDSA"], audience: "inalpha-dashboard-credential" },
+    );
 
     expect(payload).toMatchObject({
       sub: "user:alice",
@@ -68,6 +83,14 @@ describe("EvolverClient", () => {
       llm_config_digest: snapshot.config_digest,
     });
     expect(Number(payload.exp) - Number(payload.iat)).toBe(300);
+    expect(credential).toMatchObject({
+      sub: "user:alice",
+      token_use: "evolution_credential",
+      config_id: "config-1",
+      operation_id: "approval-operation-1",
+      llm_config_digest: snapshot.config_digest,
+    });
+    expect(Number(credential.exp) - Number(credential.iat)).toBe(3_600);
   });
 
   it("retries 502/504 with the same approval-derived operation ID", async () => {
@@ -92,7 +115,33 @@ describe("EvolverClient", () => {
       expect((init.headers as Record<string, string>)["X-Evolution-Approval"]).toBe(
         "approval-token",
       );
+      expect((init.headers as Record<string, string>)["X-Evolution-Credential"]).toBe(
+        "credential-grant",
+      );
       expect(init.body).not.toContain("not-forwarded");
     }
+  });
+
+  it("retries a 502 once but does not retry other client errors", async () => {
+    const retryable = vi
+      .fn()
+      .mockResolvedValueOnce(response(502))
+      .mockResolvedValueOnce(response(200));
+    vi.stubGlobal("fetch", retryable);
+    await expect(
+      new EvolverClient({ baseUrl: "http://evolver.test", token: "owner-token" }).startRun(
+        options(),
+      ),
+    ).resolves.toMatchObject({ status: "queued" });
+    expect(retryable).toHaveBeenCalledTimes(2);
+
+    const nonRetryable = vi.fn().mockResolvedValue(response(403));
+    vi.stubGlobal("fetch", nonRetryable);
+    await expect(
+      new EvolverClient({ baseUrl: "http://evolver.test", token: "owner-token" }).startRun(
+        options(),
+      ),
+    ).rejects.toThrow();
+    expect(nonRetryable).toHaveBeenCalledTimes(1);
   });
 });

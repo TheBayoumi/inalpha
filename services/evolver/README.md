@@ -11,9 +11,12 @@ slot、候选、费用与可复现元数据持久化到 PostgreSQL。
 - bars、数据 manifest/hash、种子源码、非密钥 LLM 配置和定价摘要在执行前冻结；baseline、
   seed 与候选使用同一份 frozen bars。
 - 用户 LLM API key 只在执行时通过 Dashboard 内部路由按 owner/config_id 获取，不进入 run
-  配置、候选记录或日志。
-- 当前演化费用审批只为 `deepseek`、`openai`、`kimi`、`zhipu` 维护冻结计价表；其他
-  provider 仍可用于普通对话，但启动演化会因缺少可审计定价而 fail closed。
+  配置、候选记录或日志；队列只短暂保存 orchestration 签发的 capability，兑换后立即清除。
+- 当前演化费用审批只为 `deepseek`、`openai`、`kimi`、`zhipu` 各自的默认模型维护冻结计价
+  表；未知模型与其他 provider 均 fail closed。输入 UTF-8 字节数与输出 token 数也受冻结
+  上限约束，因此 `budget × 最大单候选估算` 是执行硬边界。它们仍可用于普通对话。
+- 演化运行只连接上述 provider 的官方 HTTPS API 端点；普通对话可用的自定义代理地址不会
+  进入 Evolver，避免服务端凭据解析链路被用来访问内网地址。
 - 所有 run/candidate 查询都按认证 owner 隔离；全局并发与单账户 active run 数均有限制。
 - Evolver 只生成和评估候选，绝不会自动 promote、启动策略或下单。
 - AST 审计、受限动态加载、契约检查和回测子进程是当前防线；子进程并非 hardened container
@@ -24,7 +27,8 @@ slot、候选、费用与可复现元数据持久化到 PostgreSQL。
 ```text
 Dashboard / orchestration
   → 冻结 LLM + pricing snapshot，取得逐次审批
-  → POST /api/v1/runs（Idempotency-Key + X-Evolution-Approval）
+  → 签发 owner/operation/config/digest 绑定的 Ed25519 credential grant
+  → POST /api/v1/runs（Idempotency-Key + 两个审批/凭据 header）
   → 冻结真实 bars + manifest/hash
   → 解析 seed，跑同数据 baseline
   → LLM 生成 unified diff
@@ -45,11 +49,17 @@ Dashboard / orchestration
 | `evaluator/` | frozen dataset 回测、子进程资源限制与 fitness |
 | `runtime/` | 异步 dispatcher、slot 并发、取消、超时与终态收口 |
 | `storage/` | PostgreSQL run/candidate 持久化与 owner-scoped 查询 |
-| `owner_llm.py` | 用短时、用途限定且绑定 `config_id` 的 service JWT 即时读取 owner 模型配置 |
+| `owner_llm.py` | 转交短时、逐操作且一次性消费的 credential grant，读取 owner 模型配置 |
 
 ## HTTP API
 
 所有 `/api/v1/*` 端点都要求用户 JWT。
+
+> `inalpha-evolver 0.2.0` 收紧了创建 run 的契约：`POST /api/v1/runs` 现在必须同时提供
+> 冻结的 `llm` 快照、`Idempotency-Key`、`X-Evolution-Approval` 与
+> `X-Evolution-Credential`。这是 0.x 阶段的安全性
+> breaking change；自建部署应将 Dashboard、orchestration、migration 0041 与 Evolver
+> 作为同一次升级发布，直接调用旧接口的客户端必须同步更新。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -78,6 +88,18 @@ Dashboard / orchestration
 | `EVOLVER_JOB_TIMEOUT_S` / `EVOLVER_RUN_TIMEOUT_S` | 单候选与整次 run 超时 |
 | `EVOLVER_JOB_MEM_GB` | 回测子进程内存上限 |
 | `EVOLVER_LLM_TIMEOUT_S` | 单次 LLM 变异超时 |
+
+owner 凭据 capability 使用 Ed25519。生成 DER/base64 密钥：
+
+```bash
+openssl genpkey -algorithm ED25519 -out /tmp/inalpha-evolution-private.pem
+openssl pkey -in /tmp/inalpha-evolution-private.pem -outform DER | base64 | tr -d '\n'
+openssl pkey -in /tmp/inalpha-evolution-private.pem -pubout -outform DER | base64 | tr -d '\n'
+```
+
+依次填入 `EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64` 与
+`EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64`。生产私钥只注入 orchestration；Dashboard 只持有公钥，
+Evolver 显式移除私钥，因此不能自行签发任意 owner/config 的明文凭据读取授权。
 
 ```bash
 cd infra/migrations && uv run alembic upgrade head && cd ../..

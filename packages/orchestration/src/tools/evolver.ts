@@ -32,6 +32,7 @@ export const evolverRunEvolutionTool = createTool({
       config: inputData.config,
       idempotencyKey: approved.operationId,
       approvalToken: approved.approvalToken,
+      credentialGrant: approved.credentialGrant,
       llmSnapshot: approved.llmSnapshot,
     });
   },

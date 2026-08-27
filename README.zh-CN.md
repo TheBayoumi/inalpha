@@ -231,7 +231,7 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 | ✅ 已上线 | 研究 → 策略 → 回测 lineage | D-8c | `deep_dive → compose_strategy → run_backtest` 全链路串 `research_id` / `backtest_id` |
 | ✅ 已上线 | LLM 自创策略 — E1 MVP | D-9 | 三道沙盒（AST 审计 / 子进程 / `Strategy` 协议契约） + 多目标 fitness + baseline 自动并跑 |
 | ✅ 已上线 | 策略演化 — E1 生产闭环 | E1 | `services/evolver:8005` · 计费动作显式审批 · unified-diff 变异 · 冻结数据集/hash · seed/baseline/candidate 同 bars 评估 · owner 隔离异步 run/slot 状态机 |
-| ⏭️ 进行中 | 冻结 LLM 审批快照 | E1 收口 | 审批绑定 owner + operation ID + 模型/计价摘要 · 加密 owner 凭据按需解析 · 被拒变异也记 token/费用 |
+| ✅ 已上线 | 冻结 LLM 审批快照 | E1 收口 | Dashboard 批准/拒绝 · owner/operation/模型/计价绑定 · Ed25519 一次性凭据 grant · 被拒变异也记 token/费用 |
 | ✅ 已上线 | 风控引擎落到 HTTP 边界 | D-9 | 声明式 `risk_rules.toml` · 撮合前 `enforce` · `risk_locks` 表（独立 commit） |
 | ✅ 已上线 | Bull / Bear 研究员辩论 | D-9 | `services/research` 立场对抗研究员 |
 | ✅ 已上线 | Scheduler / cron agent 模式 | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` 管理面 |
@@ -346,6 +346,12 @@ cp .env.example .env
 
 要换模型？把 `LLM_MODEL=...` 一起填。Mastra 和 `services/research` 共读这一份配置——不再需要在每个 service 各自维护 .env。
 
+如需运行 Evolver，还要生成 Ed25519 凭据授权密钥对，把 DER base64 分别填入
+`EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64` / `EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64`；命令见
+[`services/evolver/README.md`](services/evolver/README.md)。缺少密钥时演化会 fail closed。
+当前演化只接受 DeepSeek、OpenAI、Kimi、智谱各自已有冻结计价的默认模型；普通对话仍可使用
+其他模型或自定义代理。
+
 > 旧用户 `services/*/.env` / `packages/orchestration/.env` 里已填的值仍作为 cwd-level fallback 生效（迁移期友好）。把它们合并到根 `.env` 后即可删掉。
 
 **可选 · 宏观因子需要 FRED key。** 因子库的宏观因子（`macro.*`——利率、期限/信用利差、CPI、就业、实体经济、情绪）通过 `venue=fred` 读 FRED 数据。在 `.env` 里设 `FRED_API_KEY` 即可启用，[免费、秒发](https://fred.stlouisfed.org/docs/api/api_key.html)。不配 key 时 connector 不注册，宏观因子优雅降级（价量因子不受影响）。注意：宏观因子**仅在 `timeframe=1d/1wk` 计算**——intraday bar 上会被过滤（月频序列会变成阶梯函数），所以要看宏观因子请用 `1d`。
@@ -382,7 +388,7 @@ pnpm i           # 仅首次
 pnpm dev         # → http://localhost:3001
 ```
 
-无需额外配置 —— 控制台直接读仓库根的 `.env`（后端 URL + `JWT_SECRET` 都继承），只要第 4 步的
+无需单独配置控制台 —— 它直接读仓库根的 `.env`（后端 URL + `JWT_SECRET` 都继承），只要第 4 步的
 service 起着，它就能连上。内置**黑白双主题**（终端「印章 / Vermilion」美学，详见
 [`apps/dashboard/design.md`](apps/dashboard/design.md)）与侧栏 `en / 中` 切换。
 
@@ -390,7 +396,8 @@ service 起着，它就能连上。内置**黑白双主题**（终端「印章 /
 
 > orchestrator 与经显式审批的 `services/evolver` run 会消耗 owner 自己的 LLM key；
 > `services/research` 当前使用部署级 provider/key，`services/paper` 从不直接调用 LLM。Evolver
-> 只在执行时临时解析加密凭据，run 内只存冻结的非敏感配置/计价快照。想用多个独立 terminal 手动起，或看底层 live trace（`mastra dev`
+> 通过绑定 owner/operation 且一次性消费的短效 grant 临时解析加密凭据；grant 兑换后清除，
+> run 内只保留冻结的非敏感配置/计价快照。想用多个独立 terminal 手动起，或看底层 live trace（`mastra dev`
 > playground <http://127.0.0.1:4111>）？见 [`AGENTS.md §4`](AGENTS.md)。
 
 ### 6 · 试着问几句

@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from psycopg import AsyncConnection
 
 _COLUMNS = """run_id,owner_account_id,requested_by_sub,seed_strategy_id,budget,config,
-llm_snapshot,llm_config_digest,status,llm_cost_usd,queued_at,started_at,updated_at,finished_at,
+llm_snapshot,llm_config_digest,llm_credential_grant,status,llm_cost_usd,queued_at,started_at,updated_at,finished_at,
 venue,symbol,request_timeframe,data_timeframe,engine_timeframe,requested_as_of,
 seed_source_snapshot,seed_source_hash,seed_report_snapshot,baseline_snapshot,dataset_manifest,
 active_stage,failure_code,failure_message"""
@@ -27,16 +27,17 @@ async def insert_run(
     budget: int,
     config: dict[str, Any],
     llm_snapshot: dict[str, Any],
+    llm_credential_grant: str,
     queued_at: datetime,
 ) -> tuple[dict[str, Any], bool]:
     run_id = uuid4()
     async with conn.cursor() as cur:
         await cur.execute(
             f"""INSERT INTO strategy_evo_runs(run_id,owner_account_id,requested_by_sub,
-seed_strategy_id,budget,config,llm_snapshot,llm_config_digest,status,idempotency_key,
+seed_strategy_id,budget,config,llm_snapshot,llm_config_digest,llm_credential_grant,status,idempotency_key,
 request_hash,queued_at,venue,symbol,request_timeframe,data_timeframe,engine_timeframe,
 requested_as_of,seed_source_snapshot,seed_source_hash) VALUES
-(%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+(%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
 ON CONFLICT(owner_account_id,idempotency_key) DO NOTHING RETURNING {_COLUMNS},request_hash""",
             (
                 run_id,
@@ -47,6 +48,7 @@ ON CONFLICT(owner_account_id,idempotency_key) DO NOTHING RETURNING {_COLUMNS},re
                 json.dumps(config, default=str),
                 json.dumps(llm_snapshot),
                 llm_snapshot["config_digest"],
+                llm_credential_grant,
                 idempotency_key,
                 request_hash,
                 queued_at,
@@ -87,6 +89,16 @@ async def get_run(
         await cur.execute(sql, params)
         row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def clear_credential_grant(conn: AsyncConnection, run_id: UUID) -> None:
+    """凭据 capability 兑换成功后立即从持久化队列清除。"""
+    await conn.execute(
+        """UPDATE strategy_evo_runs
+        SET llm_credential_grant=NULL,llm_credential_grant_required=FALSE
+        WHERE run_id=%s""",
+        (run_id,),
+    )
 
 
 async def transition(

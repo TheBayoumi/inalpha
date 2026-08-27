@@ -249,7 +249,13 @@
     },
     "empty": "暂无活动。",
     "emptyFiltered": "没有「{kind}」类事件。",
-    "sourceDown": "{sources} 不可用 —— 这些事件没进时间线。",
+  "sourceDown": "{sources} 不可用 —— 这些事件没进时间线。",
+  "approval": {
+    "allow": "批准",
+    "deny": "拒绝",
+    "failed": "请重试",
+    "working": "提交中…"
+  },
     "source": {
       "scheduler": "定时任务",
       "permissions": "审批",

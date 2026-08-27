@@ -192,7 +192,8 @@ seed / buy-and-hold / 全候选同数据哈希评估、owner 隔离、数据库�
   contract 与独立回测子进程。该子进程有超时/内存限制，但不是 hardened container/VM。
 - **显式审批**：`evolver.run_evolution` 是 costful ask；审批按认证 owner 隔离，聊天文字、
   model output 或另一 turn 不能代替可信审批。Evolver 不自动 promote、start 或 order。
-- **Dashboard**：已有演化列表、run 详情、候选详情、取消、能力开关与多租户错误隔离。
+- **Dashboard**：已有演化列表、run 详情、候选详情、取消、能力开关、多租户错误隔离，以及
+  活动页内的显式批准/拒绝入口；审批内容展示冻结模型与本次预算费用上限估算。
 
 ### 当前分支收口：冻结 LLM 审批快照（migration 0041）
 
@@ -200,11 +201,18 @@ seed / buy-and-hold / 全候选同数据哈希评估、owner 隔离、数据库�
   生成稳定 `config_digest` 和 operation id；批准后 5 分钟 JWT 同时绑定 owner、operation 与 digest。
 - Evolver 创建 run 时校验审批 JWT 与 snapshot digest，再持久化非密钥 `llm_snapshot`；数据库
   check constraint 要求新写入具备完整快照，历史行不伪造元数据。
-- 执行时用短时、`token_use=evolver_credential` 且绑定 `config_id` 的 service JWT 调 Dashboard internal route，按 owner + config_id
-  即时解密 API key；key 不写入 snapshot、run/candidate、异常或日志。
+- 批准后由 orchestration 用独立 Ed25519 私钥签发短时 credential grant，绑定 owner、operation、
+  config 与 digest；Evolver 只转交、不能签发。Dashboard 用公钥验签并以 `jti` 在 PostgreSQL
+  一次性消费，再按 owner + config_id 即时解密 API key；队列中的 grant 兑换后立即清除，
+  明文 key 不写入 snapshot、run/candidate、异常或日志。
+- 演化只接受每家已有冻结价格条目的精确模型；未知模型 fail closed。DeepSeek 官方
+  `https://api.deepseek.com` 与 `/v1` alias 统一规范化，不会误判为自定义代理。
+- 输入 prompt 以 UTF-8 字节数保守约束在冻结 input token 上限内，输出 token 同样硬限制；
+  因此 Dashboard 展示的 `budget × 最大单候选估算` 不只是提示，也是本次执行的费用硬边界。
 - LLM 成功、diff 被拒和其它已发生调用的路径都记录 input/output/cache-hit tokens 与实际或
   按冻结单价计算的 `llm_cost_usd`；`DASHBOARD_SERVICE_URL` 与
-  `EVOLVER_LLM_TIMEOUT_S` 已进入环境模板和生产 Compose。
+  `EVOLVER_LLM_TIMEOUT_S`、凭据签名公私钥已进入环境模板和生产 Compose；Dashboard 暂时
+  不可用或返回 5xx 时 run 回到队列重试，不会在依赖启动窗口直接进入失败终态。
 
 ---
 

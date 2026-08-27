@@ -86,6 +86,46 @@ class EvolutionLLMSnapshot(BaseModel):
     @model_validator(mode="after")
     def verify_config_digest(self) -> EvolutionLLMSnapshot:
         """拒绝任何未被 Mastra 审批摘要覆盖的快照字段变更。"""
+        official_base_urls = {
+            "deepseek": "https://api.deepseek.com",
+            "openai": "https://api.openai.com/v1",
+            "kimi": "https://api.moonshot.cn/v1",
+            "zhipu": "https://open.bigmodel.cn/api/paas/v4",
+        }
+        if self.provider == "deepseek" and self.base_url == "https://api.deepseek.com/v1":
+            self.base_url = "https://api.deepseek.com"
+        if self.base_url != official_base_urls[self.provider]:
+            raise PydanticCustomError(
+                "llm_endpoint_unavailable",
+                "evolution requires the official {provider} API endpoint",
+                {"provider": self.provider},
+            )
+        priced_models = {
+            "deepseek": ("deepseek-v4-pro", 0.56, 1.68),
+            "openai": ("gpt-5.5", 5.0, 15.0),
+            "kimi": ("kimi-k2.6", 0.6, 2.5),
+            "zhipu": ("glm-5.2", 0.7, 2.8),
+        }
+        expected_model, expected_input_rate, expected_output_rate = priced_models[self.provider]
+        pricing = self.pricing
+        expected_max = (
+            pricing.assumed_input_tokens * expected_input_rate
+            + pricing.max_output_tokens * expected_output_rate
+        ) / 1_000_000
+        if (
+            self.model != expected_model
+            or pricing.version != "provider-estimate-2026-08"
+            or pricing.assumed_input_tokens != 24_000
+            or pricing.max_output_tokens != 8_192
+            or pricing.input_usd_per_million != expected_input_rate
+            or pricing.output_usd_per_million != expected_output_rate
+            or abs(pricing.estimated_max_usd_per_candidate - expected_max) > 1e-12
+        ):
+            raise PydanticCustomError(
+                "llm_pricing_unavailable",
+                "evolution pricing is unavailable for model {provider}/{model}",
+                {"provider": self.provider, "model": self.model},
+            )
         expected = compute_llm_config_digest(self)
         if not hmac.compare_digest(self.config_digest, expected):
             raise PydanticCustomError(

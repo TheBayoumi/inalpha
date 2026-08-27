@@ -31,6 +31,10 @@ docker compose ps             # postgres / redis 应为 healthy
 
 首次安装与任何拉取新 migration 后都升级到当前 head；`scripts/dev.sh` 不会自动迁移。
 
+生产或长期运行的自建实例应采用协调停机升级：先停止旧版应用 service，再执行 migration，
+最后统一启动同一版本的 Dashboard、orchestration 与 Python services。尤其从 0041 起，新的
+Evolver run 必须携带冻结 LLM 快照，旧 writer 与新 schema 不支持滚动混跑。
+
 ```bash
 cd infra/migrations
 uv sync

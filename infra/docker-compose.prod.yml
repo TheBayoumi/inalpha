@@ -160,6 +160,8 @@ services:
       DATA_SERVICE_URL: http://data:8001
       DASHBOARD_SERVICE_URL: http://dashboard:3001
       EVOLVER_LLM_TIMEOUT_S: ${EVOLVER_LLM_TIMEOUT_S:-120}
+      # 签名私钥只属于 orchestration；覆盖 svc-common env_file，防 Evolver 自签 owner grant。
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
     deploy:
       replicas: 1
     depends_on:
@@ -228,6 +230,7 @@ services:
       # 加密密钥 —— 解密 users 表 preferences 中存储的 LLM API key。
       # 未配置时从 JWT_SECRET 派生（encryption.ts 降级）。
       LLM_CONFIG_ENCRYPTION_KEY: ${LLM_CONFIG_ENCRYPTION_KEY:-}
+      EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64: ${EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64:?required}
       MASTRA_URL: http://mastra:4111
       PAPER_SERVICE_URL: http://paper:8002
       DATA_SERVICE_URL: http://data:8001

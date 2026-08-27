@@ -240,7 +240,11 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
               toolInput: approvalViewInput,
               approvalInput,
               timeoutMs:
-                opts.askTimeoutMs && opts.askTimeoutMs > 0 ? opts.askTimeoutMs : undefined,
+                opts.askTimeoutMs && opts.askTimeoutMs > 0
+                  ? opts.askTimeoutMs
+                  : toolName === "evolver.run_evolution"
+                    ? 300_000
+                    : undefined,
             });
             return {
               isError: true,
