@@ -1,6 +1,6 @@
 # 01 · 架构总览
 
-> 状态：**现行架构总览**（2026-06-05）。
+> 状态：**现行架构总览**（2026-08-27）。
 > 本文给"整体形态 + 各层职责 + 关键不变量"的高层视图；内核事件循环 / Clock /
 > MessageBus / 撮合 / 风控的详细设计见 [`03-kernel-design.md`](./03-kernel-design.md)；
 > 逐里程碑的落地状态见 [`04-current-state.md`](./04-current-state.md)。
@@ -10,62 +10,62 @@
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  入口层（当前）                                                         │
-│  mastra :4111    对话 + 实时 trace（主入口：tool call / hook / token）  │
-│  apps/dashboard  运营控制台（app.inalpha.dev · :3001 · 只读看板 + BFF） │
-│  apps/web        静态官网（inalpha.dev）；CopilotKit 对话 UI 规划 Phase E+│
+│  mastra :4111    Agent 编排 API + trace                                   │
+│  apps/dashboard  认证控制台（app.inalpha.dev · :3001 · 对话 + BFF + 看板）│
+│  apps/web        静态官网（inalpha.dev）                                  │
 └───────────────────────────────┬──────────────────────────────────────┘
-        dashboard: 同源 /api/* → BFF（dev token 转发，token 不进浏览器）
+        dashboard: 同源 /api/* → BFF（逐用户 JWT；模型密钥服务端加密保存）
 ┌───────────────────────────────▼──────────────────────────────────────┐
 │  编排层 · packages/orchestration · Mastra (TypeScript)                 │
 │                                                                        │
 │   agents/      orchestrator → trader / risk（按市场分类自动路由 venue）│
-│   tools/       data.* web.* factor.* research.* paper.* trade.* swarm.*│
+│   tools/       data.* web.* factor.* research.* paper.* trade.* evolver.*│
+│                swarm.*                                                  │
 │                + mcp__<server>__<verb>（可插拔外部 MCP）               │
 │   hooks/       5 类生命周期事件 + Stop（PreToolUse / PostToolUse / …） │
 │   permissions/ allow / ask / deny 三态（deny > allow > ask > default） │
 │   plan/exec    create_plan → approve_plan → execute_plan（一次性 token）│
-│   memory/      PostgresStore · 用户偏好 / 历史会话 / plan 状态          │
+│   memory/      PostgresStore · 用户偏好 / 历史会话；plan 由 paper DB 持久化│
 └───────────────────────────────┬──────────────────────────────────────┘
                                 │ HTTP / MCP（每个 tool 调对应服务）
-        ┌───────────────┬───────┴───────┬───────────────┐
-        ▼               ▼               ▼               ▼
-  ┌──────────┐   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-  │  data    │   │  paper       │ │  research    │ │  factor      │
-  │  :8001   │   │  :8002       │ │  :8003       │ │  :8004       │
-  │ 行情/财报 │   │ 内核+回测+   │ │ 多 analyst   │ │ 因子库 + IC  │
-  │ /web/fx  │   │ 模拟盘+沙盒  │ │ + bull/bear  │ │ 有效性       │
-  └─────┬────┘   └──────┬───────┘ └──────────────┘ └──────────────┘
+        ┌──────────┬──────────┬──────────┬──────────┬──────────┐
+        ▼          ▼          ▼          ▼          ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │ data     │ │ paper    │ │ research │ │ factor   │ │ evolver  │
+  │ :8001    │ │ :8002    │ │ :8003    │ │ :8004    │ │ :8005    │
+  │行情/财报 │ │内核/回测 │ │多分析师  │ │因子/IC   │ │策略演化  │
+  │/web/fx   │ │/模拟盘   │ │与辩论    │ │与衰减    │ │与审计    │
+  └─────┬────┘ └─────┬────┘ └──────────┘ └──────────┘ └─────┬────┘
         │               │   （services/_shared：跨服务基础设施，改前评估）
         ▼               ▼
   ┌──────────────────────────────────┐
-  │  Postgres 17 + TimescaleDB        │  hypertable: bars / ticks / orders
-  │                                   │  常规表: accounts / positions / runs / plans
+  │  Postgres 17 + TimescaleDB        │  hypertable: bars / ticks
+  │                                   │  常规表: orders / accounts / positions / runs / plans
   └──────────────────────────────────┘
         ▲
         │  外部数据源 / 经纪商
         └── CCXT(crypto) · akshare(A股/港股) · yfinance(美股/全球) · FRED · DDGS(web)
 ```
 
-> 启动后端 + 编排：`pnpm i && uv sync && bash scripts/dev.sh up`
-> （data:8001 + paper:8002 + research:8003 + factor:8004 + mastra:4111，各带 `/health`）。
+> 安装依赖后，先按根 README 复制根 `.env` 与 `infra/.env`、启动开发 Compose 并执行 Alembic
+> migration；随后从仓库根运行 `bash scripts/dev.sh up`。
+> （data:8001 + paper:8002 + research:8003 + factor:8004 + evolver:8005 + mastra:4111，各 service 带 `/health`）。
 > 运营控制台另起：`cd apps/dashboard && pnpm dev`（:3001，BFF 连后端）。
 
 ## 各层职责
 
 ### 入口层
 
-当前用户入口两个，面向不同用途：
+当前主要入口两个，面向不同用途：
 
 - **`mastra dev` playground（:4111）** — 跟 orchestrator agent 对话，并在 live trace UI 里
   看每个 tool call / hook 事件 / approval token。当前主要的"对话 + 操作"入口。
-- **`apps/dashboard`**（`:3001` · `app.inalpha.dev`）— **只读运营控制台**：把"原本要问
-  agent 才知道的运行时状态"（账户 / 持仓 / live runner / agent 活动 / 回测史）变成一眼可见
-  的盘面，让对话回归"决策 / 操作"本职。动态 Next（Node 运行时）用 Route Handler 当 **BFF**——
-  浏览器只调同源 `/api/*`，server 侧用 dev token 转发到后端（Python service 未配 CORS + 需
-  JWT，token 不进浏览器）。单用户 dev token、非多租户产品；当前已落地**组合总览 MVP**。
+- **`apps/dashboard`**（`:3001` · `app.inalpha.dev`）— **认证后的操作者控制台**：提供
+  agent 对话、组合 / 持仓 / live runner / 演化 / 回测 / 因子 / 风控等页面。动态 Next
+  Route Handler 作为 **BFF**，浏览器只访问同源 `/api/*`；服务端按登录用户签发 JWT，
+  用户级 LLM 配置加密保存，明文密钥不写入演化记录或浏览器持久状态。
 
-`apps/web`（`inalpha.dev`）当前是静态官网（`output:"export"` → Cloudflare Pages，品牌 /
-文档）；面向终端用户的 CopilotKit 对话 UI 规划在 Phase E+，尚未接后端。
+`apps/web`（`inalpha.dev`）是静态官网（`output:"export"` → Cloudflare Pages，品牌 / 文档）。
 
 ### 编排层 · `packages/orchestration`（Mastra / TypeScript）
 
@@ -75,9 +75,10 @@ Inalpha 的"大脑 + 护栏"。三件事：
 2. **把 LLM 关在交易路径外**——四层防御（详 `03` / 博客篇 1）：
    - **tool 集分桶**：orchestrator 看不到直下单 tool
    - **permissions deny-list**：`live.*` / 直下单恒 deny，不可被 hook 覆盖
-   - **plan/exec 两阶段**：`create_plan → approve_plan → execute_plan`，approval_token
-     一次性 + 5min TTL，LLM 永不持有 token
-   - **审计签名**：PostToolUse hook 强制写脱敏 + 签名的审计日志
+   - **plan/exec 两阶段**：`create_plan → approve_plan → execute_plan`；模型只能把审批 tool
+     返回的一次性、5min TTL `approval_token` 传给 execute，不能访问或绕过底层下单 tool
+   - **审计分层**：交易计划、审批、演化 run/candidate 等领域记录持久化到 Postgres；hook
+     telemetry 脱敏后 best-effort 写出，不替代领域审计事实
 3. **可插拔 MCP**：`mcp__<server>__<verb>` 走同一套 hooks + permissions；默认只启用零密钥
    公开端点，付费连接器以 `disabled:true` 作模板。
 
@@ -89,6 +90,7 @@ Inalpha 的"大脑 + 护栏"。三件事：
 | **paper** | 8002 | 事件驱动内核（Clock / MessageBus / 撮合 / 风控）+ 回测引擎 + **live runner**（模拟盘按行情自动跑）+ **strategy_authoring**（LLM 自创策略三道沙盒 + fitness） |
 | **research** | 8003 | LLM 多 analyst（fundamental / sentiment / technical / valuation …）+ bull/bear 辩论 → `StrategyHint`，不直接下单 |
 | **factor** | 8004 | 因子库（pandas-ta / Alpha101 / qlib）+ IC 有效性检验；`factor.timing / .score / .catalog`，只产出信号 |
+| **evolver** | 8005 | E1 策略演化：冻结数据集与 LLM/定价快照、单代 unified-diff 变异、候选评估、owner-scoped 异步状态；显式审批后才可产生费用，且不会自动 promote / 启动策略 / 下单 |
 | **_shared** | — | 跨服务基础设施（DataClient / 错误类型 / auth …），改前评估 |
 
 **核心不变量：回测 = 模拟盘 同代码（架构上可延伸到实盘，但真钱实盘不在当前计划）。** 同一份 `Strategy` 文件，只换 Clock
@@ -102,6 +104,7 @@ Inalpha 的"大脑 + 护栏"。三件事：
 paper  ✗ import research   （内核不依赖 LLM）
 factor ✗ import paper      （因子只产出信号）
 data   ✗ import 任何其他服务 （最底层）
+evolver ✗ 绕过 data / owner auth（bars 由 data 获取；用户密钥只可按 owner 即时读取）
 ```
 
 协作只走 HTTP / MCP：research → paper 传 `StrategyHint`；paper ← data 拉 bars/fx/
@@ -113,9 +116,11 @@ fundamentals；paper → risk 同进程前置守门（所有 Order 撮合前过 
 2. **数据中心化**：所有服务只从 data-service 取数据，不私自爬交易所
 3. **策略不直接下单**：策略产出 `Order`，由 Execution Engine + 风控决定怎么发
 4. **风控前置**：所有 Order 进 Execution 前先过 RiskGuard（HTTP 路径强制）
-5. **LLM 无直下单路径**：tool 分桶 + permissions deny + plan/exec token + 审计签名
+5. **LLM 无直下单路径**：tool 分桶 + permissions deny + plan/exec token + 领域审计
 6. **金融时效性**：读行情/新闻默认 `fresh=True`；freshness 看 `bars[-1].ts` 距 as_of
    的间隔，不看 bar 数量；数据不可用时显式降级 + 标低 confidence，不静默用过时数据
+7. **演化逐次授权且可复现**：产生 LLM 费用前冻结非密钥配置、定价与数据 manifest；审批绑定
+   owner + operation，5 分钟后过期；候选永不自动 promote、启动或下单
 
 ## 延伸阅读
 

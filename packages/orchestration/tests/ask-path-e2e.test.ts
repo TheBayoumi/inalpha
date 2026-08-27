@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { AUTH_SUB_KEY, HookRunner, withHooks } from "../src/hooks/index.js";
+import {
+  APPROVAL_OPERATION_ID_KEY,
+  buildEvolutionLLMSnapshot,
+  USER_LLM_SNAPSHOT_KEY,
+} from "../src/mastra/llm/evolution-snapshot.js";
 import { PendingApprovalsStore } from "../src/permissions/pending.js";
 
 function toolContext(owner: string, thread: string, runId = "turn-1") {
@@ -113,5 +118,45 @@ describe("explicit approval path", () => {
     expect(noThread.message).toContain("stable thread/session");
     expect(store.size()).toBe(0);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("演化审批冻结 LLM 快照，并在响应丢失后的同范围调用中复用 operation ID", async () => {
+    const store = new PendingApprovalsStore(() => {});
+    const observedOperations: unknown[] = [];
+    const execute = vi.fn().mockImplementation((_input, context) => {
+      observedOperations.push(context.requestContext.get(APPROVAL_OPERATION_ID_KEY));
+      return { status: "executed" };
+    });
+    const wrapped = withHooks(
+      { id: "evolver.run_evolution", execute },
+      {
+        runner: new HookRunner(),
+        permissionResolver: () => "ask",
+        pendingApprovals: store,
+        askTimeoutMs: 5_000,
+      },
+    );
+    const input = { budget: 1, config: { symbol: "BTCUSDT" } };
+    const context = toolContext("user:alice", "thread-A");
+    context.requestContext.set(
+      USER_LLM_SNAPSHOT_KEY,
+      buildEvolutionLLMSnapshot({
+        id: "config-1",
+        provider: "deepseek",
+        api_key: "must-not-enter-approval",
+      }),
+    );
+
+    const pending = (await wrapped.execute!(input, context)) as {
+      requestId: string;
+      toolInput: unknown;
+    };
+    expect(JSON.stringify(pending.toolInput)).not.toContain("must-not-enter-approval");
+    expect(store.respond(pending.requestId, "allow", "user:alice")).toBe(true);
+
+    expect(await wrapped.execute!(input, context)).toEqual({ status: "executed" });
+    expect(await wrapped.execute!(input, context)).toEqual({ status: "executed" });
+    expect(observedOperations).toEqual([pending.requestId, pending.requestId]);
+    store.clearAll();
   });
 });

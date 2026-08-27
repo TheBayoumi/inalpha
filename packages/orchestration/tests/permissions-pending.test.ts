@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AUTH_SUB_KEY } from "../src/hooks/with-hooks.js";
 import { permissionsApiRoutes } from "../src/permissions/api.js";
@@ -41,6 +41,10 @@ function fakeContext(owner: string | undefined, id: string, decision: "allow" | 
   };
 }
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("PendingApprovalsStore", () => {
   it("binds approval to owner, thread, tool and deterministic input digest", () => {
     const store = new PendingApprovalsStore(() => {});
@@ -57,7 +61,7 @@ describe("PendingApprovalsStore", () => {
         toolName: "paper.promote_candidate",
         approvalInput: { candidateId: "c-42" },
       }),
-    ).toBe(false);
+    ).toBeUndefined();
     expect(
       store.consumeApproved({
         authSub: "user:alice",
@@ -65,7 +69,7 @@ describe("PendingApprovalsStore", () => {
         toolName: "paper.promote_candidate",
         approvalInput: { candidateId: "c-42" },
       }),
-    ).toBe(true);
+    ).toBe(view.requestId);
     expect(
       store.consumeApproved({
         authSub: "user:alice",
@@ -73,7 +77,7 @@ describe("PendingApprovalsStore", () => {
         toolName: "paper.promote_candidate",
         approvalInput: { candidateId: "c-42" },
       }),
-    ).toBe(false);
+    ).toBeUndefined();
   });
 
   it("deny and timeout revoke the record", async () => {
@@ -98,6 +102,65 @@ describe("PendingApprovalsStore", () => {
     const store = new PendingApprovalsStore(() => {});
     expect(request(store).requestId).toBe(request(store).requestId);
     expect(store.size()).toBe(1);
+    store.clearAll();
+  });
+
+  it("reuses one evolution operation ID for a same-scope transport retry", () => {
+    const store = new PendingApprovalsStore(() => {});
+    const args = {
+      authSub: "user:alice",
+      sessionId: "thread-A",
+      toolName: "evolver.run_evolution",
+      toolInput: { budget: 1 },
+      approvalInput: { request: { budget: 1 }, llm_snapshot: { config_digest: "digest" } },
+      timeoutMs: 5_000,
+    };
+    const view = store.request(args);
+    expect(store.respond(view.requestId, "allow", "user:alice")).toBe(true);
+
+    const consume = {
+      authSub: args.authSub,
+      sessionId: args.sessionId,
+      toolName: args.toolName,
+      approvalInput: args.approvalInput,
+      reuseAfterConsume: true,
+    };
+    expect(store.consumeApproved(consume)).toBe(view.requestId);
+    expect(store.consumeApproved(consume)).toBe(view.requestId);
+    expect(
+      store.consumeApproved({
+        ...consume,
+        approvalInput: { request: { budget: 2 }, llm_snapshot: { config_digest: "digest" } },
+      }),
+    ).toBeUndefined();
+    store.clearAll();
+  });
+
+  it("does not reuse a consumed evolution operation after its deadline", () => {
+    vi.useFakeTimers();
+    const store = new PendingApprovalsStore(() => {});
+    const args = {
+      authSub: "user:alice",
+      sessionId: "thread-A",
+      toolName: "evolver.run_evolution",
+      toolInput: { budget: 1 },
+      approvalInput: { request: { budget: 1 }, llm_snapshot: { config_digest: "digest" } },
+      timeoutMs: 50,
+    };
+    const view = store.request(args);
+    expect(store.respond(view.requestId, "allow", args.authSub)).toBe(true);
+    const consume = {
+      authSub: args.authSub,
+      sessionId: args.sessionId,
+      toolName: args.toolName,
+      approvalInput: args.approvalInput,
+      reuseAfterConsume: true,
+    };
+    expect(store.consumeApproved(consume)).toBe(view.requestId);
+
+    vi.advanceTimersByTime(51);
+
+    expect(store.consumeApproved(consume)).toBeUndefined();
     store.clearAll();
   });
 });
@@ -145,6 +208,6 @@ describe("permissions approval HTTP API", () => {
         toolName: "paper.promote_candidate",
         approvalInput: { candidateId: "c-42" },
       }),
-    ).toBe(true);
+    ).toBe(view.requestId);
   });
 });

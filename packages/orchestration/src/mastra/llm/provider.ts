@@ -76,7 +76,7 @@ export const SUPPORTED_PROVIDERS: readonly LLMProvider[] = [
  * | zhipu | glm-5.2 | GLM-5 系列旗舰；轻量用 glm-4.5-air |
  * | ollama | llama4 | Llama 4 默认 tag = Scout（17B/109B MoE）；大显存用 llama4:128x17b（Maverick）|
  */
-const DEFAULT_MODELS: Record<LLMProvider, string> = {
+export const DEFAULT_MODELS: Record<LLMProvider, string> = {
   deepseek: "deepseek-v4-pro",
   anthropic: "claude-opus-4-8",
   openai: "gpt-5.5",
@@ -118,7 +118,7 @@ export interface UserLLMConfig {
 /**
  * 预设供应商默认端点（与 dashboard 对齐）。
  */
-const PROVIDER_BASE_URLS: Partial<Record<string, string>> = {
+export const PROVIDER_BASE_URLS: Partial<Record<string, string>> = {
   deepseek: "https://api.deepseek.com",
   openai: "https://api.openai.com/v1",
   kimi: "https://api.moonshot.cn/v1",

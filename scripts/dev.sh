@@ -20,9 +20,9 @@
 #   4111  mastra dev          (默认端口)            TCP connect
 #
 # 前置条件:
-#   - 已跑 `pnpm i` 和 `uv sync`
-#   - services/data 需要可达的 Postgres + .env 配置 (DATABASE_URL / BINANCE_*)
-#   - services/paper 在 D-8a 不强依赖 DB
+#   - packages/orchestration 已跑 `pnpm i`，五个 Python service 目录分别跑过 `uv sync`
+#   - 先用 infra/docker-compose.yml 启动 Postgres/Redis，并把 Alembic migration 升到 head
+#   - data / paper / factor / evolver 都依赖可达的 Postgres 与根 .env DATABASE_URL
 #   - services/research 需要 LLM_API_KEY（默认 deepseek；LLM_PROVIDER=fake 时可空）
 #   - services/evolver 强制 DATABASE_URL，E1 只允许单 worker
 
@@ -139,6 +139,7 @@ start_service() {
     local name="$1"
     local cwd="$2"
     local cmd="$3"
+    local allow_credential_signing="${4:-0}"
     local log="${LOG_DIR}/${name}.log"
     local pid_file="${PID_DIR}/${name}.pid"
 
@@ -150,6 +151,9 @@ start_service() {
     echo "[up]   $name → $log"
     (
         cd "$cwd"
+        if [[ "$allow_credential_signing" != "1" ]]; then
+            unset EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64
+        fi
         # shellcheck disable=SC2086
         nohup $cmd >"$log" 2>&1 &
         echo $! > "$pid_file"
@@ -318,7 +322,8 @@ case "$CMD" in
             "uv run uvicorn inalpha_evolver.main:app --host 127.0.0.1 --port 8005 --reload"
         start_service "orchestration" \
             "${ROOT}/packages/orchestration" \
-            "pnpm dev"
+            "pnpm dev" \
+            "1"
 
         if (( NO_WAIT == 1 )); then
             echo ""

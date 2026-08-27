@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mintServiceToken } from "../src/auth.js";
 import { AUTH_SUB_KEY } from "../src/hooks/with-hooks.js";
 import { identityMiddleware } from "../src/mastra/identity.js";
+import { USER_LLM_SNAPSHOT_KEY } from "../src/mastra/llm/evolution-snapshot.js";
 
 const TEST_KEY = "unique-test-key-must-never-reach-logs";
 
@@ -61,6 +62,47 @@ describe("identityMiddleware", () => {
 
     expect(response.status).toBe(200);
     expect(requestContext.get(AUTH_SUB_KEY)).toBe("user:alice");
+  });
+
+  it("injects a non-secret evolution snapshot for a supported owner config", async () => {
+    const requestContext = new Map<string, unknown>();
+    const response = await appWithRequestContext(requestContext).request("/", {
+      headers: {
+        Authorization: `Bearer ${await mintServiceToken({ sub: "user:alice" })}`,
+        "X-LLM-Config": JSON.stringify({
+          id: "config-1",
+          provider: "deepseek",
+          model: "deepseek-v4-pro",
+          api_key: TEST_KEY,
+        }),
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const snapshot = requestContext.get(USER_LLM_SNAPSHOT_KEY);
+    expect(snapshot).toMatchObject({
+      config_id: "config-1",
+      provider: "deepseek",
+      model: "deepseek-v4-pro",
+    });
+    expect(JSON.stringify(snapshot)).not.toContain(TEST_KEY);
+  });
+
+  it("keeps chat available but omits evolution snapshot for an unsupported provider", async () => {
+    const requestContext = new Map<string, unknown>();
+    const response = await appWithRequestContext(requestContext).request("/", {
+      headers: {
+        Authorization: `Bearer ${await mintServiceToken({ sub: "user:alice" })}`,
+        "X-LLM-Config": JSON.stringify({
+          id: "config-1",
+          provider: "anthropic",
+          api_key: TEST_KEY,
+        }),
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestContext.has(USER_LLM_SNAPSHOT_KEY)).toBe(false);
   });
 
   it("returns 401 for an invalid Bearer token", async () => {

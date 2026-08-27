@@ -9,11 +9,11 @@
 - **不是**开箱即用策略平台 / LangChain / AutoGen 包装
 - **三层**：Next.js + CopilotKit → Mastra（TS）→ Python services。详 `docs/01-architecture-overview.md`
 
-## 2. 文档入口 & 当前 Phase（D-12）
+## 2. 文档入口 & 当前 Phase（D-12 + E1）
 
 - `README.md` / `README.zh-CN.md` 首页；`AGENTS.md` 多工具入口；`docs/00-context.md` 背景 / `01-architecture-overview.md` 架构 / `03-kernel-design.md` services / `04-current-state.md` 进度
 - 内部 ADR 在 `docs/miro/`（gitignored，公开文档勿引用）
-- D-8~D-9 闭环（Plan/Exec + LLM 自创策略 + 风控）；D-10 多市场数据（web/基本面）；D-11 多市场模拟盘（跨币种 cash + live runner）；D-12 因子库闭环（血缘+衰减巡检+monthly 宏观+因子发现 L1）；下一 E2 演化 #7
+- D-8~D-12 已完成 Plan/Exec、策略创作、风控、多市场模拟盘与因子闭环；research-hub 已收口；E1 独立 Evolver 已落地真实 frozen bars、显式审批、owner 隔离与可复现实验元数据。当前收口冻结 LLM/定价快照与费用审计；下一 E2 best-parent 多代演化 #7
 
 ## 3. 协作硬约束
 
@@ -43,7 +43,7 @@ Inalpha 是**金融 agent**——任何"看起来很新但其实 stale"的输出
 
 ## 4. CI 红线（push 前本地必跑，缺一不可）
 
-- `pnpm typecheck && pnpm vitest run`（orchestration）+ `uv run ruff check .`（data/paper/research）+ `bash scripts/check-consistency.sh`
+- `(cd packages/orchestration && pnpm typecheck && pnpm vitest run)` + 各 Python service 目录执行 `uv run ruff check .` + paper/evolver 目录执行 `uv run pytest` + `bash scripts/check-consistency.sh`
 - **加 import 必同步 `git add`**——`grid-size-cap.ts` / `scheduler/` / `_base.py` 漏 add 反复让 CI 挂；commit 前 `git status` 看 untracked
 - 公开文档（README / AGENTS / `docs/00-04`）禁引用 `docs/miro/` 私有路径
 - 模块顶层 eager 调 `getSettings()` 的入口，测试靠 vitest `setupFiles`（`tests/setup.ts`）注入默认 env
@@ -51,13 +51,18 @@ Inalpha 是**金融 agent**——任何"看起来很新但其实 stale"的输出
 ## 5. 起步 + Active TODO
 
 ```bash
-pnpm i && uv sync && bash scripts/dev.sh   # data:8001 + paper:8002 + mastra:4111
+cd packages/orchestration && pnpm i && cd ../..
+for s in data paper research factor evolver; do (cd "services/$s" && uv sync); done
+cp .env.example .env && cp infra/.env.example infra/.env
+(cd infra && docker compose up -d)
+(cd infra/migrations && uv sync && uv run alembic upgrade head)
+bash scripts/dev.sh                        # data:8001…evolver:8005 + mastra:4111
 ```
 
 D-9/D-9.1a 收口 + D-10 多市场数据（web/基本面）+ D-11 多市场模拟盘
 （跨币种 cash + live runner #1）+ D-12 因子库闭环（血缘 + 衰减巡检 +
-monthly 宏观 + 因子发现 L1 + 三方研究辩论）已落地。
-下一：E2 演化 #7
+monthly 宏观 + 因子发现 L1 + 三方研究辩论）和 E1 独立 Evolver 已落地。
+当前：冻结 LLM/定价快照、owner key 即时获取、token/cost 审计；下一：E2 best-parent 多代演化 #7
 
 ---
 

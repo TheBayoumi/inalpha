@@ -57,6 +57,13 @@ class EvolverSettings(BaseSettings):
         ge=1,
         le=8,
     )
+    evolver_queue_timeout_s: int = Field(
+        default=86400,
+        alias="EVOLVER_QUEUE_TIMEOUT_S",
+        ge=60,
+        le=86400,
+        description="queued run 最长等待时间；必须短于凭据 grant 的 48 小时有效期。",
+    )
     evolver_account_active_limit: int = Field(
         default=2,
         alias="EVOLVER_ACCOUNT_ACTIVE_LIMIT",
@@ -66,6 +73,16 @@ class EvolverSettings(BaseSettings):
     data_service_url: str = Field(
         default="http://127.0.0.1:8001",
         alias="DATA_SERVICE_URL",
+    )
+    dashboard_service_url: str = Field(
+        default="http://127.0.0.1:3001",
+        alias="DASHBOARD_SERVICE_URL",
+    )
+    evolver_llm_timeout_s: int = Field(
+        default=120,
+        alias="EVOLVER_LLM_TIMEOUT_S",
+        ge=1,
+        le=600,
     )
     jwt_secret: str = Field(default="dev-secret", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")

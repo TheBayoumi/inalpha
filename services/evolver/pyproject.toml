@@ -1,6 +1,6 @@
 [project]
 name = "inalpha-evolver"
-version = "0.1.0"
+version = "0.2.0"
 description = "Inalpha 策略演化引擎 —— LLM-as-mutation-operator 单代/多代演化闭环"
 license = "AGPL-3.0-only"
 requires-python = ">=3.12"
@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.13.0",
     "pydantic-settings>=2.14.0",
     "psycopg[binary,pool]>=3.3.0",
+    "openai>=2.38.0",
     "unidiff>=0.7.0",
 ]
 

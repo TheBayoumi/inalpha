@@ -1,7 +1,9 @@
-# 03 · Inalpha 内核架构（正式版）
+# 03 · Inalpha 内核设计（Phase C 基线 + 现行差异）
 
-> 状态：**Phase C 正式设计**，基于 Phase B 4 份 repo 拆解结论 + 用户锁定决策。
-> 取代 `01-architecture-overview.md` 中的 high-level 草图；01 保留作快照。
+> 状态：本文保留 **Phase C 内核基线设计**，并在关键接口处标出现行差异。
+> [`01-architecture-overview.md`](./01-architecture-overview.md) 才是现行高层架构，
+> [`04-current-state.md`](./04-current-state.md) 是实现进度权威来源；本文中的 MVP、目录树和
+> 启动清单属于历史设计，不应用来判断当前能力是否已落地。
 
 ## 锁定决策（Phase C·2026-05-21）
 
@@ -17,7 +19,7 @@
 
 ---
 
-## MVP 范围（Phase E 目标）
+## MVP 范围（Phase E 原始目标 · 历史）
 
 **端到端能跑通的最小闭环**：
 
@@ -60,7 +62,7 @@ paper-engine（同代码 = backtest=live）下模拟单
 - ❌ Swarm 跑批回测（仅做单 strategy）
 - ❌ Mastra workflow 长任务 suspend-resume
 
-### D-8a 已完成项（2026-05-21）
+### D-8a 已完成项（2026-05-21 · 历史快照）
 
 > 详细模块清单与代码入口见 [`docs/04-current-state.md`](./04-current-state.md)。
 
@@ -70,14 +72,17 @@ paper-engine（同代码 = backtest=live）下模拟单
   - 三 agent（`orchestrator` / `trader` / `risk`）拆分（Mastra supervisor 模式）
   - Hooks runner（`PreToolUse` / `PostToolUse` / `PostToolUseFailure` / `SessionStart` / Stop）
   - Permission Engine（allow / ask / deny 三态 + 参数 predicate）
-  - Plan/Exec 三 tool（`createTradePlan` / `approveTradePlan` / `executeTradePlan`）+ Plan Store（in-memory，含 `approval_token` 派发）
+  - Plan/Exec 三 tool（`createTradePlan` / `approveTradePlan` / `executeTradePlan`）；当前 plan 与 approval token 已由 paper PostgreSQL 持久化，不再使用进程内 store
 
-**D-8b / D-9 在做**：`trade_plans` / `approval_tokens` Postgres 表 + Alembic migration；
-RiskEngine 规则化（max notional / 价格偏离 / 日损上限）+ paper-service 真接入。
+**后续实况**：D-8b / D-9 的 `trade_plans`、`approval_tokens`、RiskEngine HTTP 守门均已落地；
+详见 [`04-current-state.md`](./04-current-state.md)。
 
 ---
 
-## 三层架构
+## 三层架构（Phase C 原图 · 现行总图见 01）
+
+现行入口是 `apps/dashboard`（认证 + agent 对话 + BFF + 操作者看板），`apps/web` 是静态官网；
+Python 服务已扩展为 data/paper/research/factor/evolver 五个，Evolver 固定端口 `8005`。
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -131,10 +136,12 @@ RiskEngine 规则化（max notional / 价格偏离 / 日损上限）+ paper-serv
 | 服务 | 端口（建议） | 核心职责 | 主依赖 |
 |---|---|---|---|
 | `apps/web` | 3000 | UI + 认证 + Mastra 挂载点 | Next.js 16 / CopilotKit / better-auth |
+| `apps/dashboard` | 3001 | 现行认证控制台：对话 + BFF + 组合/回测/演化/风控看板 | Next.js / next-intl |
 | `services/data` | 8001 | 行情接入 / 历史回放 / 实时订阅 | CCXT / akshare（后期） |
 | `services/paper` | 8002 | 内核：Clock / MessageBus / Strategy / Gateway / Engine；回测 + 模拟盘（同代码可延伸实盘，不在当前计划） | Python kernel（自研） |
 | `services/research` | 8003 | LLM 多 agent 决策（TradingAgents 风格，Mastra 重写） | OpenAI/Anthropic SDK |
 | `services/factor` | 8004 | 因子库（pandas-ta / Alpha101 / qlib）+ IC 有效性检验，只产出信号（已落地 D-11） | qlib + 自研 |
+| `services/evolver` | 8005 | frozen dataset 上的单代策略演化、显式审批、owner 隔离、候选与费用审计 | FastAPI + paper evaluator |
 
 ---
 
@@ -410,10 +417,11 @@ export const strategyLifecycle = createWorkflow({ id: 'strategy-lifecycle' })
   .commit()
 ```
 
-### Tools 清单（当前实现）
+### 代表性 Tools（当前实现）
 
-> 本节原为 Phase C 的 MVP 设想，已更新为 **当前实际暴露的 tool 族**（2026-06-05）。
-> 权威清单以代码为准：`packages/orchestration/src/tools/` + `agents/orchestrator.ts`。
+> 本节原为 Phase C 的 MVP 设想，现只列 **当前代表性 tool 族与入口**（2026-08-27），
+> 不逐项穷举 risk / scheduler / divination / sandbox 等运维或辅助 tools。权威清单以代码为准：
+> `packages/orchestration/src/tools/` + `agents/orchestrator.ts`。
 
 | Tool 族 | 代表 tool | 服务 / 路径 | 用途 |
 |---|---|---|---|
@@ -425,9 +433,10 @@ export const strategyLifecycle = createWorkflow({ id: 'strategy-lifecycle' })
 | **paper.\*（模拟盘）** | `paper.start_strategy` `.stop_strategy` `.list_strategy_runs` `.list_strategy_run_decisions` `.list_orders` `.list_positions` | paper:8002 | live runner 起停 / 运行状态 / 决策复盘 / 持仓 |
 | **trade.\***（下单护栏三件套） | `trade.create_plan` → `.approve_plan` → `.execute_plan`（+ `.reject_plan` `.get_plan`） | orchestration + paper `/orders/submit` | 两阶段批准，approval_token 一次性 + 5min TTL，`execute_plan` 是**唯一**有 side-effect 的下单 tool |
 | **swarm.\*** | `swarm.run_backtest_grid` | paper:8002 | 参数网格批量回测（grid-size-cap 守门） |
+| **evolver.\*** | `evolver.run_evolution` `.get_evolution` `.get_candidate` `.abort_evolution` | evolver:8005 | 显式批准后启动 owner-scoped 演化，查询候选或取消；不自动 promote/start/order |
 | **mcp__\<server\>__\*** | `mcp__coingecko__*` … | 外部 MCP | 可插拔外部源，走同一套 hooks + permissions；默认只启零密钥端点 |
 
-> **执行链路**：`trade.* → Hooks (PreToolUse) → Permission Engine → Plan Store → /orders/submit`。
+> **执行链路**：`trade.* → Hooks (PreToolUse) → Permission Engine → paper DB plan/approval → /orders/submit`。
 > LLM 视野里**没有**直接 `submit_order` 路径——旧 `paper.submit_order_intent` /
 > `live.submit_order` 全部 `deny` 或 `modelInvocable:false`。详见
 > [`docs/04-current-state.md`](./04-current-state.md)。
@@ -449,7 +458,9 @@ shared-py (internal Python lib: kernel / model / utils)
 data-service ◄─── paper-service（用于历史回放和实盘数据订阅）
 data-service ◄─── research-service（取行情给 analyst）
 data-service ◄─── factor-service（取行情给因子计算）
-research-service ──► paper-service.submit_order_intent（决策落地）
+data-service ◄─── evolver-service（冻结真实行情）
+evolver-service ──► paper evaluator（复用审计、加载、回测与 fitness；不进入下单链路）
+research-service ──► orchestration plan/exec（决策落地）
 ```
 
 **禁止**的依赖（防止循环）：
@@ -457,10 +468,11 @@ research-service ──► paper-service.submit_order_intent（决策落地）
 - paper-service **不** import research-service（避免内核依赖 LLM）
 - factor-service **不** import paper-service（因子只产出信号）
 - data-service **不** import 任何其他服务（最底层）
+- evolver-service **不**持久化 owner 明文 LLM key，也**不**自动调用 promote/start/order
 
 ---
 
-## MVP 端到端流程
+## MVP 端到端流程（Phase C 历史示例）
 
 ```
 用户："帮我研究 BTC 这周，建议好的话上模拟盘"
@@ -504,7 +516,10 @@ research-service ──► paper-service.submit_order_intent（决策落地）
 
 ---
 
-## 目录结构（Phase D 起 mkdir）
+## 目录结构（Phase C 规划快照）
+
+该树不再代表当前仓库；现行目录以代码为准，新增了 `apps/dashboard`、`services/evolver`、
+完整 factor/research 以及自托管部署文件。
 
 ```
 inalpha/
@@ -561,7 +576,7 @@ inalpha/
 
 ---
 
-## Phase D 启动清单（下一轮工作）
+## Phase D 启动清单（历史 · 已完成）
 
 按这个顺序起 packages：
 
@@ -598,4 +613,3 @@ inalpha/
 
 - `services/paper` 内核单测覆盖 ≥70%（Clock / MessageBus / 状态机）
 - 一份 e2e 测试：跑通 backtest → start paper → wait fill → assert position
-

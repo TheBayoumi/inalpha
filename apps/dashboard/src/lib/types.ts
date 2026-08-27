@@ -500,6 +500,9 @@ export interface ActivityEvent {
   href: string | null;
   /** 行内迷你指标(可选):紧跟标题,带语调染色,扫一眼能定位关键数字。 */
   stats?: ActivityStat[];
+  /** 仅待审批事件存在；浏览器通过同源 BFF 提交 allow / deny。 */
+  approvalRequestId?: string;
+  approvalDeadline?: string;
 }
 
 /** GET /api/activity —— Agent 活动流聚合负载。 */

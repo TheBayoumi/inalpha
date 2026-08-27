@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Inalpha · Operator Console",
-    "description": "Read-only runtime dashboard for Inalpha paper trading."
+    "description": "Authenticated Inalpha operator console for chat, paper trading, backtests, evolution, and runtime governance."
   },
   "nav": {
     "console": "Operator Console",
@@ -249,7 +249,13 @@
     },
     "empty": "No activity yet.",
     "emptyFiltered": "No {kind} events.",
-    "sourceDown": "{sources} unavailable — those events are missing from the feed.",
+  "sourceDown": "{sources} unavailable — those events are missing from the feed.",
+  "approval": {
+    "allow": "Approve",
+    "deny": "Deny",
+    "failed": "Retry",
+    "working": "Saving…"
+  },
     "source": {
       "scheduler": "Scheduler",
       "permissions": "Approvals",

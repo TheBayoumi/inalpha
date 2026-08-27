@@ -28,7 +28,13 @@ interface SchedulerJobsResp {
   schedulerRunning: boolean;
 }
 interface PendingResp {
-  pending: Array<{ requestId: string; toolName: string; createdAt: string }>;
+  pending: Array<{
+    requestId: string;
+    toolName: string;
+    toolInput: unknown;
+    createdAt: string;
+    deadline: string;
+  }>;
 }
 /** /permissions/history 一行 —— 审批审计终态(mastra Postgres,重启不丢)。 */
 interface ApprovalHistoryResp {
@@ -148,15 +154,19 @@ export async function GET() {
   if (pendingR.status === "fulfilled") {
     pendingCount = pendingR.value.pending.length;
     for (const p of pendingR.value.pending) {
+      const approval = summarizeApprovalInput(p.toolInput);
       events.push({
         id: `perm:${p.requestId}`,
         kind: "permission",
         ts: p.createdAt,
         title: p.toolName,
-        detail: "awaiting approval",
+        detail: approval.detail,
         outcome: "pending",
         tone: "gold",
-        href: null,
+        href: "/activity",
+        stats: approval.stats,
+        approvalRequestId: p.requestId,
+        approvalDeadline: p.deadline,
       });
     }
   } else {
@@ -437,6 +447,37 @@ export async function GET() {
   return NextResponse.json(payload, {
     headers: { "Cache-Control": "no-store" },
   });
+}
+
+/** Extracts only non-secret, user-decision fields from a pending tool input. */
+function summarizeApprovalInput(input: unknown): {
+  detail: string;
+  stats?: Array<{ text: string; tone: "gold" }>;
+} {
+  if (!input || typeof input !== "object") return { detail: "awaiting approval" };
+  const record = input as Record<string, unknown>;
+  const request =
+    record.request && typeof record.request === "object"
+      ? (record.request as Record<string, unknown>)
+      : record;
+  const snapshot =
+    record.llm_snapshot && typeof record.llm_snapshot === "object"
+      ? (record.llm_snapshot as Record<string, unknown>)
+      : undefined;
+  const pricing =
+    snapshot?.pricing && typeof snapshot.pricing === "object"
+      ? (snapshot.pricing as Record<string, unknown>)
+      : undefined;
+  const budget = typeof request.budget === "number" ? request.budget : undefined;
+  const unitCost =
+    typeof pricing?.estimated_max_usd_per_candidate === "number"
+      ? pricing.estimated_max_usd_per_candidate
+      : undefined;
+  const model = typeof snapshot?.model === "string" ? snapshot.model : undefined;
+  const detail = ["awaiting explicit approval", model].filter(Boolean).join(" · ");
+  return budget && unitCost
+    ? { detail, stats: [{ text: `≤ $${(budget * unitCost).toFixed(4)}`, tone: "gold" }] }
+    : { detail };
 }
 
 function orderTone(status: string): ActivityTone {

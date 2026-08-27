@@ -1,10 +1,10 @@
-# 04 · 当前状态：Plan/Exec 闭环 + 工程护栏 + 因子库闭环
+# 04 · 当前状态：D-12 + E1 策略演化生产闭环
 
-> 状态：**D-12 因子库闭环完成（2026-06-11）**——因子血缘 + 衰减巡检 + monthly
+> 状态：**D-12 因子库闭环 + E1 独立 Evolver 已落地（更新至 2026-08-27）**——因子血缘 + 衰减巡检 + monthly
 > 宏观 + 因子发现 L1，在 D-11（多市场模拟盘）/ D-10（web 搜索 + 财报基本面 +
 > 多市场数据）/ D-9（Plan/Exec 闭环 + LLM 自创策略 + 风控引擎）/ D-9.1a 基础上落地。
-> 下一里程碑：E2 多代演化（issue #7）；E1 单代生产闭环已落地（见下），
-> research-hub（issue #6）已于 2026-06-12 收口。
+> research-hub（issue #6）已于 2026-06-12 收口；E1 生产代码由 PR #159 合入 main，
+> 当前分支继续冻结 LLM/定价审批快照与费用审计。下一里程碑：E2 best-parent 多代演化（issue #7）。
 >
 > 本文回答的问题：**clone 仓库后，"现在到底做到哪里、决策链路长什么样"。**
 > 详细架构与设计取舍见 [`docs/03-kernel-design.md`](./03-kernel-design.md)；
@@ -30,7 +30,7 @@ sequenceDiagram
     participant R as Risk
     participant H as Hooks
     participant P as Permission
-    participant PS as Plan Store
+    participant PS as Paper DB Plan Store
     participant Paper as services/paper
 
     U->>O: "Open 0.01 BTC long"
@@ -75,11 +75,14 @@ sequenceDiagram
 | Plan/Exec 三 tool | `packages/orchestration/src/tools/` | `trade-plan.ts`（`createTradePlan` / `approveTradePlan` / `executeTradePlan`） |
 | Hooks runner（5 类事件） | `packages/orchestration/src/hooks/` | `runner.ts` · `with-hooks.ts` · `matcher.ts`（`SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PostToolUse` / `PostToolUseFailure` + Stop） |
 | Permission Engine（三态） | `packages/orchestration/src/permissions/` | `engine.ts` · `predicate.ts` · `defaults.ts`（YAML 化在 D-8b） |
-| Plan Store（in-memory） | `packages/orchestration/src/plans/` | `store.ts`（含 approval_token 派发，一次性 + expire_at） |
+| Plan/approval 持久化 | `services/paper/src/inalpha_paper/api/` · `storage/` | `trade_plans.py` 与 owner-scoped DB 查询；approval_token 一次性 + expire_at |
 | paper 单笔下单 endpoint | `services/paper/src/inalpha_paper/api/` | `orders.py` → `POST /orders/submit` |
-| 3 个回测策略 | `services/paper/src/inalpha_paper/strategies/` | `buy_and_hold.py` · `sma_cross.py` · `mean_reversion.py` |
+| 策略与评估内核 | `services/paper/src/inalpha_paper/strategies/` · `strategy_evaluation.py` | 内置 baseline/教学/adapter + 候选审计、回测与市场网格评估 |
 | paper 内核 | `services/paper/src/inalpha_paper/kernel/` · `execution/` | `clock.py` · `msgbus.py` · `risk_engine.py` · `execution_engine.py` · `order_executor.py` · `gateway.py` |
-| data 服务（Binance） | `services/data/` | CCXT Binance → Postgres + TimescaleDB |
+| data 多市场服务 | `services/data/` | CCXT / akshare / yfinance / FRED / web → Postgres + TimescaleDB |
+| research + factor | `services/research/` · `services/factor/` | 三方研究辩论；因子血缘、IC、衰减与发现工作流 |
+| E1 Evolver | `services/evolver/` | frozen bars + unified diff + owner-scoped 异步 run/slot + PostgreSQL 候选审计 |
+| 认证控制台 | `apps/dashboard/` | 登录/session、agent 对话、逐用户 LLM 配置、演化/回测/runner/因子/风控看板 |
 
 ---
 
@@ -145,14 +148,13 @@ sequenceDiagram
 - **baseline 自动并跑**：`runner.run_backtest` candidate 分支用 `asyncio.gather` 同时跑
   candidate + `buy_and_hold` 同 bars/cash/fee；`BacktestResponse` 加 `baseline` 字段；
   alpha 判定 = `candidate.fitness` 显著高于 `baseline.fitness`
-- **审批门**：`POST /strategy_candidates/{id}/promote` 端点 + orchestration 端
-  `paper.promote_candidate` tool。MVP 阶段 permission 默认 `allow`，agent 自助闭环
-  （前端 askUserChoice 还没接通，`ask` 会让 agent 撞墙）；审批责任改由两道防御替代：
-  (1) orchestrator prompt 强制 agent 调前自检 `fitness > baseline` + 等用户明确指令；
-  (2) 后端硬校验 `fitness IS NOT NULL` + 当前 `status='candidate'`，并把
-  `reason / promoted_by / promoted_at` 写到候选 `audit.promotion`。promote 仅做状态
-  切换；按行情 tick 调 `on_bar` 的 live runner 在 **D-11 已接入**（见下方 D-11 小节）。
-  ADR-0018 askUserChoice 接通后回归 `ask`
+- **审批门（D-9 当时 → 当前）**：`POST /strategy_candidates/{id}/promote` 端点 +
+  orchestration 端 `paper.promote_candidate` tool。D-9 MVP 曾因审批交互未接通临时使用
+  permission `allow`；D-9.1b 起已经恢复 `ask`，首次调用登记 owner-scoped 待审批项，用户
+  明确同意后以相同操作身份重调才会执行。后端仍硬校验 `fitness IS NOT NULL` + 当前
+  `status='candidate'`，并把 `reason / promoted_by / promoted_at` 写到候选
+  `audit.promotion`。promote 仅做状态切换；按行情 tick 调 `on_bar` 的 live runner 在
+  **D-11 已接入**（见下方 D-11 小节）。
 - **RiskEngine 真接入 paper HTTP 层**（ADR-0006 / issue #3）：lifespan 加载
   `configs/risk_rules.toml` → 构造 async `RiskGuard`（独立于 backtest 的 sync
   `RiskEngine`）→ `POST /orders/submit` 与 `POST /plans/{id}/execute` 撮合前过
@@ -177,6 +179,45 @@ E1 已拆出 `services/evolver/` 独立服务，完成 unified-diff 单代变异
 seed / buy-and-hold / 全候选同数据哈希评估、owner 隔离、数据库幂等与异步 run/slot 状态机；
 演化需用户显式授权，不会在候选采纳后自动产生额外 LLM 费用。
 （注：promoted 候选的 live runner 原列在此处，已在 D-11 落地，见下方 D-11 小节。）
+
+### E1 生产闭环（2026-08-25 · PR #159）
+
+- **独立服务与部署**：`services/evolver:8005` 已接入 dev/selfhost/prod Compose、镜像构建、
+  health check 和 CI；Paper/Evolver pytest 与 migration 测试进入主 CI。
+- **真实、可复现评估**：run 先按 `requested_as_of` 拉取并冻结已收盘 bars，保存 manifest 与
+  dataset hash；seed、buy-and-hold baseline、候选共享同一数据和年化口径，数据错误 fail closed。
+- **异步持久化**：run/slot/candidate 全部落 PostgreSQL，支持 owner-scoped 列表/详情、幂等
+  创建、全局并发与账户 active 限制、abort、超时和终态收口。
+- **候选边界**：LLM 只返回 unified diff；应用后继续经过 AST audit、受限 loader、Strategy
+  contract 与独立回测子进程。该子进程有超时/内存限制，但不是 hardened container/VM。
+- **显式审批**：`evolver.run_evolution` 是 costful ask；审批按认证 owner 隔离，聊天文字、
+  model output 或另一 turn 不能代替可信审批。Evolver 不自动 promote、start 或 order。
+- **Dashboard**：已有演化列表、run 详情、候选详情、取消、能力开关、多租户错误隔离，以及
+  活动页内的显式批准/拒绝入口；审批内容展示冻结模型与本次预算费用上限估算。
+
+### 当前分支收口：冻结 LLM 审批快照（migration 0041）
+
+- 编排层在展示审批前冻结 `config_id/provider/model/base_url/pricing/version/最大单候选估算`，
+  生成稳定 `config_digest` 和 operation id；批准后 5 分钟 JWT 同时绑定 owner、operation 与 digest。
+- Evolver 创建 run 时校验审批 JWT 与 snapshot digest，再持久化非密钥 `llm_snapshot`；数据库
+  check constraint 要求新写入具备完整快照，升级前仍在 queued/running 的历史任务会显式
+  abort，避免在缺少冻结授权的情况下继续执行。
+- 批准后由 orchestration 用独立 Ed25519 私钥签发短时 credential grant，绑定 owner、operation、
+  config 与 digest；Evolver 只转交、不能签发。Dashboard 用公钥验签并以 `jti` 在 PostgreSQL
+  记录并校验同 scope 的兑换；首次响应丢失时仅允许 2 分钟内补偿重试一次，再按 owner +
+  config_id 即时解密 API key；队列中的 grant
+  在成功兑换后立即清除，
+  明文 key 不写入 snapshot、run/candidate、异常或日志。
+- credential grant 有效期 30 小时，queued 最长保留 24 小时；超时任务以
+  `EVOLUTION_QUEUE_TIMEOUT` 显式 abort，不会等到执行时才因凭据过期失败。
+- 演化只接受每家已有冻结价格条目的精确模型；未知模型 fail closed。DeepSeek 官方
+  `https://api.deepseek.com` 与 `/v1` alias 统一规范化，不会误判为自定义代理。
+- 输入 prompt 以 UTF-8 字节数保守约束在冻结 input token 上限内，输出 token 同样硬限制；
+  因此 Dashboard 展示的 `budget × 最大单候选估算` 不只是提示，也是本次执行的费用硬边界。
+- LLM 成功、diff 被拒和其它已发生调用的路径都记录 input/output/cache-hit tokens 与实际或
+  按冻结单价计算的 `llm_cost_usd`；`DASHBOARD_SERVICE_URL` 与
+  `EVOLVER_LLM_TIMEOUT_S`、凭据签名公私钥已进入环境模板和生产 Compose；Dashboard 暂时
+  不可用或返回 5xx 时 run 回到队列重试，不会在依赖启动窗口直接进入失败终态。
 
 ---
 
@@ -499,7 +540,7 @@ spot 仍严格 long-only（裸空 / 超卖翻空被守门拒），做空 / 杠�
 
 live runner follow-up（非阻塞，待开）：轮询不感知交易时段（#48，休市空轮询浪费）、
 LIMIT 单不跨 bar 挂单（#47，当前即时 IOC 语义）；session 持仓 resume（#37.2）、
-#38 Phase F（沙盒子进程隔离 / service token audience）。
+#38 Phase F（沙盒子进程强化隔离；Evolver owner-key 凭证已按用途、owner 与 `config_id` 收窄）。
 
 多市场日历 follow-up（非阻塞）：盘前 / 盘后时段、指数映射表补全、深交所 XSHE /
 印度 XNSE 精确化（当前分别复用 XSHG / XBOM）。

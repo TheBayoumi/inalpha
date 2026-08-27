@@ -2,7 +2,12 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 
-import { evolutionConfigSchema, getEvolverClient, type ToolRequestContext } from "./evolver-shared.js";
+import {
+  evolutionConfigSchema,
+  getApprovedEvolutionRunContext,
+  getEvolverClient,
+  type ToolRequestContext,
+} from "./evolver-shared.js";
 
 export const evolverRunEvolutionTool = createTool({
   id: "evolver.run_evolution",
@@ -16,15 +21,19 @@ export const evolverRunEvolutionTool = createTool({
     budget: z.number().int().min(1).max(20).default(4),
     seedStrategyId: z.string().min(1).max(128).default("sma_cross_v1"),
     config: evolutionConfigSchema,
-    idempotencyKey: z.string().min(8).max(128).optional(),
   }),
   execute: async (inputData, ctx) => {
-    const client = await getEvolverClient(ctx?.requestContext as ToolRequestContext | undefined);
-    return await client.startRun({
+    const approved = await getApprovedEvolutionRunContext(
+      ctx?.requestContext as ToolRequestContext | undefined,
+    );
+    return await approved.client.startRun({
       budget: inputData.budget,
       seedStrategyId: inputData.seedStrategyId,
       config: inputData.config,
-      idempotencyKey: inputData.idempotencyKey,
+      idempotencyKey: approved.operationId,
+      approvalToken: approved.approvalToken,
+      credentialGrant: approved.credentialGrant,
+      llmSnapshot: approved.llmSnapshot,
     });
   },
 });

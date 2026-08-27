@@ -1,60 +1,43 @@
-# services/research
+# Inalpha Research · 多视角研究与三方辩论
 
-LLM 多 agent 决策（TradingAgents 风格）—— D-8b 起步。
+`services/research` 是 FastAPI 研究服务（`:8003`）。`POST /deep_dive` 先并行运行核心
+analysts，再在观点存在分歧时触发 bull / bear / risk 辩论，最后由 manager 生成结构化、
+可回放的 `ResearchPlan`。
 
-## 当前能力
+## 当前链路
 
-| Endpoint | 用途 |
-|---|---|
-| `GET /health` | 存活探活，返当前 LLM provider |
-| `POST /deep_dive` | 跑一次完整研究链路：2 个 analyst 并行 + research manager 综合 → `ResearchPlan` |
-
-## 架构
-
-```
+```text
 DeepDiveRequest
-   ↓
-analysts/{technical,fundamental}  (asyncio.gather 并行)
-   ↓ AnalystBrief x N
-ResearchManager.synthesize()
-   ↓
-ResearchPlan
+  → 预取 bars + factor snapshot
+  → technical / fundamental / sentiment / risk / macro / valuation 并行
+  → 可选 Buffett / Lynch / Wood / Burry / Druckenmiller / Marks 人格
+  → 有分歧时 bull → bear → risk，支持软早停与总超时
+  → manager 综合 briefs + debate log
+  → ResearchPlan（factors / signals / strategy_hint / trigger / stop_reason）
 ```
 
-- `technical`：吃 K 线 + 简单指标（SMA / RSI / 涨跌幅），LLM 出短期立场
-- `fundamental`：D-8b LLM-only（无外部数据），出中长期 thesis；D-9+ 接 sentiment / news
-- `manager`：LLM 综合 → rating / thesis / risks / suggested_action / horizon
+- 单个 analyst 失败不会抹掉其他视角，失败 brief 会明确标记后交给 manager 综合。
+- `as_of` 是严格研究截止点；返回值保留 briefs、辩论轮次、触发与停止原因供审计。
+- 数据来自 `services/data`，当前有效因子来自 `services/factor`；JWT 沿调用链透传。
+- 当前 research service 读取部署级 `LLM_PROVIDER` / `LLM_MODEL` 与对应 provider key；
+  per-owner Dashboard key 尚未透传到本服务，部署者需把这一限制视为当前多租户边界。
 
-LLM 抽象：
+## HTTP API
 
-- `DeepSeekLLMClient`：走 OpenAI 兼容 API（DeepSeek 同协议）
-- `FakeLLMClient`：测试 mock，按 system prompt 子串选预设响应
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/health` | 服务与 provider 探活 |
+| `POST` | `/deep_dive` | 执行完整研究链路，返回 `ResearchPlan` |
 
-## 开发
+## 本地开发
 
 ```bash
 cd services/research
-cp .env.example .env  # 至少配 LLM_API_KEY（DeepSeek key）
 uv sync --group dev
-uv run pytest              # 全部 fake LLM，不烧 token
 uv run uvicorn inalpha_research.main:app --reload --port 8003
+
+uv run ruff check .
+uv run pytest                       # 默认 fake LLM，不产生调用费用
 ```
 
-测真 LLM（烧 token）：
-
-```bash
-LLM_PROVIDER=deepseek LLM_API_KEY=sk-xxx \
-  uv run pytest -m integration   # D-9 起加 integration mark
-```
-
-## 接 orchestration
-
-`packages/orchestration` 通过 `research.deep_dive` tool 调本服务的 POST /deep_dive。
-JWT 透传走 `inalpha_shared.auth`，跟 data / paper 同套机制。
-
-## 后续 D-9+
-
-- 加 sentiment / news analyst（接 X / Reddit / RSS）
-- bull vs bear 辩论（Mastra workflow `.dowhile`）
-- LLM 调用缓存（ADR-0014 prompt cache）
-- 真实成本 / token 计数 telemetry（ADR-0015）
+真实模型测试会产生费用，只应在显式设置 provider/key 并主动运行 integration 标记时执行。

@@ -2,6 +2,11 @@ import type { MiddlewareHandler } from "hono";
 
 import { verifyToken } from "../auth.js";
 import { AUTH_SUB_KEY } from "../hooks/with-hooks.js";
+import {
+  buildEvolutionLLMSnapshot,
+  USER_LLM_SNAPSHOT_KEY,
+  type EvolutionLLMSnapshot,
+} from "./llm/evolution-snapshot.js";
 import { userLLMStore, type UserLLMConfig } from "./llm/provider.js";
 
 let warnedNoRequestContext = false;
@@ -33,6 +38,7 @@ export function parseUserLLMConfigHeader(raw: string | undefined): UserLLMConfig
 /** Injects authenticated identity and the user-owned LLM configuration into request scope. */
 export const identityMiddleware: MiddlewareHandler = async (c, next) => {
   let userConfig: UserLLMConfig | undefined;
+  let evolutionSnapshot: EvolutionLLMSnapshot | undefined;
   try {
     userConfig = parseUserLLMConfigHeader(c.req.header("X-LLM-Config"));
     if (userConfig) {
@@ -41,6 +47,11 @@ export const identityMiddleware: MiddlewareHandler = async (c, next) => {
         provider: userConfig.provider,
         model: userConfig.model,
       });
+      try {
+        evolutionSnapshot = buildEvolutionLLMSnapshot(userConfig);
+      } catch {
+        /** Chat 可继续使用原生 provider；只有 OpenAI-compatible provider 支持演化。 */
+      }
     }
   } catch {
     // Invalid user configuration falls back to the configured model path.
@@ -67,6 +78,9 @@ export const identityMiddleware: MiddlewareHandler = async (c, next) => {
         return c.json({ error: "identity_context_unavailable" }, 503);
       }
       requestContext.set(AUTH_SUB_KEY, sub);
+      if (evolutionSnapshot) {
+        requestContext.set(USER_LLM_SNAPSHOT_KEY, evolutionSnapshot);
+      }
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       if (code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED" && !warnedAuthSignature) {

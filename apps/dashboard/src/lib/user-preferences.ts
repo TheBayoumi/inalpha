@@ -400,28 +400,25 @@ export async function decryptActiveUserApiKey(
   subject: string,
 ): Promise<(UserLLMConfig & { api_key: string }) | null> {
   const preferences = await getUserPreferences(subject);
-  const configs = preferences.configs || [];
   const activeId = preferences.active_config_id;
+  return activeId ? await decryptUserApiKey(subject, activeId, preferences) : null;
+}
 
-  if (!configs.length || !activeId) {
-    return null;
-  }
-
-  const active = configs.find((c) => c.id === activeId);
-  if (!active) {
-    return null;
-  }
-
-  // 解密 API key
+/** Resolves one owner-scoped credential reference without exposing it to browser code. */
+export async function decryptUserApiKey(
+  subject: string,
+  configId: string,
+  loaded?: UserLLMPreferences,
+): Promise<(UserLLMConfig & { api_key: string }) | null> {
+  const preferences = loaded ?? (await getUserPreferences(subject));
+  const config = (preferences.configs || []).find((item) => item.id === configId);
+  if (!config) return null;
   const encrypted: EncryptedData = {
-    ciphertext: active.api_key_encrypted,
-    nonce: active.api_key_nonce,
-    tag: active.api_key_tag,
+    ciphertext: config.api_key_encrypted,
+    nonce: config.api_key_nonce,
+    tag: config.api_key_tag,
   };
-
-  const apiKey = await decryptApiKey(encrypted);
-
-  return { ...active, api_key: apiKey };
+  return { ...config, api_key: await decryptApiKey(encrypted) };
 }
 
 /**

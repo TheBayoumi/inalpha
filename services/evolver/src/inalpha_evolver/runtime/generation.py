@@ -50,7 +50,7 @@ async def execute_generation(
             await reject_slot(run["run_id"], slot, "mutation_failed", exc)
             continue
         except DiffApplyError as exc:
-            await reject_slot(run["run_id"], slot, "diff_failed", exc)
+            await reject_slot(run["run_id"], slot, "diff_failed", exc, usage=exc)
             continue
         candidate_source = await persist_mutation(run["run_id"], slot, mutation)
         if candidate_source is not None:

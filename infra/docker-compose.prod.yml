@@ -77,6 +77,8 @@ services:
     container_name: inalpha-migrate
     restart: "no"
     env_file: ["../infra/${ENV_FILE:-.env.prod}"]
+    environment:
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,6 +97,7 @@ services:
     build: { <<: *python-build, args: { SERVICE: data } }
     container_name: inalpha-data
     environment:
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
       PORT: 8001
       WORKERS: 2          # web-search 堵事件循环 → 多 worker 缓解
     healthcheck:
@@ -110,6 +113,7 @@ services:
     build: { <<: *python-build, args: { SERVICE: paper } }
     container_name: inalpha-paper
     environment:
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
       PORT: 8002
       WORKERS: 1          # 硬约束：in-process live runner，必须单进程/单副本
     deploy:
@@ -126,7 +130,10 @@ services:
     image: ${IMAGE_PREFIX:-ghcr.io/__CHANGE_ME__}/inalpha-research:${IMAGE_TAG:-latest}
     build: { <<: *python-build, args: { SERVICE: research } }
     container_name: inalpha-research
-    environment: { PORT: 8003, WORKERS: 1 }
+    environment:
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
+      PORT: 8003
+      WORKERS: 1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=2)"]
       interval: 10s
@@ -139,7 +146,10 @@ services:
     image: ${IMAGE_PREFIX:-ghcr.io/__CHANGE_ME__}/inalpha-factor:${IMAGE_TAG:-latest}
     build: { <<: *python-build, args: { SERVICE: factor } }
     container_name: inalpha-factor
-    environment: { PORT: 8004, WORKERS: 1 }
+    environment:
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
+      PORT: 8004
+      WORKERS: 1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=2)"]
       interval: 10s
@@ -158,6 +168,10 @@ services:
       PORT: 8005
       WORKERS: 1
       DATA_SERVICE_URL: http://data:8001
+      DASHBOARD_SERVICE_URL: http://dashboard:3001
+      EVOLVER_LLM_TIMEOUT_S: ${EVOLVER_LLM_TIMEOUT_S:-120}
+      # 签名私钥只属于 orchestration；覆盖 svc-common env_file，防 Evolver 自签 owner grant。
+      EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64: ""
     deploy:
       replicas: 1
     depends_on:
@@ -226,6 +240,7 @@ services:
       # 加密密钥 —— 解密 users 表 preferences 中存储的 LLM API key。
       # 未配置时从 JWT_SECRET 派生（encryption.ts 降级）。
       LLM_CONFIG_ENCRYPTION_KEY: ${LLM_CONFIG_ENCRYPTION_KEY:-}
+      EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64: ${EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64:?required}
       MASTRA_URL: http://mastra:4111
       PAPER_SERVICE_URL: http://paper:8002
       DATA_SERVICE_URL: http://data:8001

@@ -18,7 +18,6 @@ from inalpha_shared.middleware import install_error_handler, install_request_log
 
 from .api.routes import router
 from .config import get_evolver_settings
-from .mutator import Mutator
 from .runtime import EvolutionRunManager
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ async def lifespan(app: FastAPI):
         min_size=2,
         max_size=settings.evolver_pool_size,
     )
-    manager = EvolutionRunManager(mutator=Mutator(), settings=settings)
+    manager = EvolutionRunManager(mutator=None, settings=settings)
     app.state.evolution_manager = manager
     await manager.start()
     try:

@@ -1,4 +1,5 @@
 """Evolver run 创建与列表端点。"""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from inalpha_shared.errors import ConflictError, RateLimitedError
 from ..config import get_evolver_settings
 from ..governor.seed_resolver import resolve_seed
 from ..storage import run_queries, runs
+from .approval import verify_evolution_approval
 from .cursor import decode_cursor, encode_cursor
 from .presenters import run_response
 from .request_hash import normalized_request
@@ -29,9 +31,24 @@ async def start_run(
     db: DBConn,
     user: Annotated[User, Depends(get_current_user)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
+    evolution_approval: Annotated[
+        str,
+        Header(alias="X-Evolution-Approval", min_length=20, max_length=4096),
+    ],
+    evolution_credential: Annotated[
+        str,
+        Header(alias="X-Evolution-Credential", min_length=100, max_length=4096),
+    ],
 ) -> RunStatusResponse:
     owner = account_id_from_user(user)
     settings = get_evolver_settings()
+    verify_evolution_approval(
+        evolution_approval,
+        owner_sub=user.user_id,
+        operation_id=idempotency_key,
+        llm_config_digest=body.llm.config_digest,
+        settings=settings,
+    )
     config, request_hash = normalized_request(body)
     async with db.transaction():
         await db.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (str(owner),))
@@ -48,6 +65,8 @@ async def start_run(
             seed_hash=seed.source_hash,
             budget=body.budget,
             config=config,
+            llm_snapshot=body.llm.model_dump(mode="json"),
+            llm_credential_grant=evolution_credential,
             queued_at=datetime.now(UTC),
         )
         if not created and row["request_hash"] != request_hash:
@@ -76,9 +95,7 @@ async def list_runs(
     has_more = len(rows) > page_limit
     items = rows[:page_limit]
     next_cursor = (
-        encode_cursor(items[-1]["queued_at"], items[-1]["run_id"])
-        if has_more and items
-        else None
+        encode_cursor(items[-1]["queued_at"], items[-1]["run_id"]) if has_more and items else None
     )
     return RunListResponse(
         items=[run_response(row, summary=row) for row in items],

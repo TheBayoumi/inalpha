@@ -15,7 +15,7 @@ from .finalizer import execute_managed
 
 
 class EvolutionRunManager:
-    def __init__(self, *, mutator: Any, settings: EvolverSettings) -> None:
+    def __init__(self, *, mutator: Any | None, settings: EvolverSettings) -> None:
         self.mutator = mutator
         self.settings = settings
         self.tasks: dict[UUID, asyncio.Task[None]] = {}
@@ -56,7 +56,9 @@ class EvolutionRunManager:
                 task.cancel()
         pending = tasks + ([self.dispatcher] if self.dispatcher else [])
         await asyncio.gather(*pending, return_exceptions=True)
-        close = getattr(getattr(self.mutator, "llm_client", None), "close", None)
+        close = getattr(self.mutator, "close", None)
+        if close is None:
+            close = getattr(getattr(self.mutator, "llm_client", None), "close", None)
         if close is not None:
             await close()
 

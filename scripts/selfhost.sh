@@ -39,21 +39,31 @@ init() {
   fi
   cp "$EXAMPLE_FILE" "$SELFHOST_ENV_FILE"
   local postgres_password redis_password jwt_secret encryption_key
+  local credential_private_pem credential_private_key credential_public_key
   postgres_password="$(generate_secret)"
   redis_password="$(generate_secret)"
   jwt_secret="$(generate_secret)"
   encryption_key="$(generate_secret)"
-  python3 - "$SELFHOST_ENV_FILE" "$postgres_password" "$redis_password" "$jwt_secret" "$encryption_key" <<'PY'
+  credential_private_pem="$(mktemp)"
+  trap '[[ -z "${credential_private_pem:-}" ]] || rm -f "$credential_private_pem"' EXIT
+  openssl genpkey -algorithm ED25519 -out "$credential_private_pem" 2>/dev/null
+  credential_private_key="$(openssl pkey -in "$credential_private_pem" -outform DER | base64 | tr -d '\n')"
+  credential_public_key="$(openssl pkey -in "$credential_private_pem" -pubout -outform DER | base64 | tr -d '\n')"
+  rm -f "$credential_private_pem"
+  credential_private_pem=""
+  python3 - "$SELFHOST_ENV_FILE" "$postgres_password" "$redis_password" "$jwt_secret" "$encryption_key" "$credential_private_key" "$credential_public_key" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
-postgres_password, redis_password, jwt_secret, encryption_key = sys.argv[2:]
+postgres_password, redis_password, jwt_secret, encryption_key, credential_private_key, credential_public_key = sys.argv[2:]
 content = path.read_text()
 content = content.replace("POSTGRES_PASSWORD=\n", f"POSTGRES_PASSWORD={postgres_password}\n")
 content = content.replace("REDIS_PASSWORD=\n", f"REDIS_PASSWORD={redis_password}\n")
 content = content.replace("JWT_SECRET=\n", f"JWT_SECRET={jwt_secret}\n")
 content = content.replace("LLM_CONFIG_ENCRYPTION_KEY=\n", f"LLM_CONFIG_ENCRYPTION_KEY={encryption_key}\n")
+content = content.replace("EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64=\n", f"EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64={credential_private_key}\n")
+content = content.replace("EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64=\n", f"EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64={credential_public_key}\n")
 content = content.replace("__POSTGRES_PASSWORD__", postgres_password)
 content = content.replace("__REDIS_PASSWORD__", redis_password)
 path.write_text(content)
