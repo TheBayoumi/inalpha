@@ -222,7 +222,7 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
             };
           }
 
-          const operationId = store.consumeApproved({
+          const operationId = await store.consumeApproved({
             authSub,
             sessionId,
             toolName,

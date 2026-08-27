@@ -35,9 +35,10 @@ async def insert_run(
         await cur.execute(
             f"""INSERT INTO strategy_evo_runs(run_id,owner_account_id,requested_by_sub,
 seed_strategy_id,budget,config,llm_snapshot,llm_config_digest,llm_credential_grant,status,idempotency_key,
-request_hash,queued_at,venue,symbol,request_timeframe,data_timeframe,engine_timeframe,
+request_hash,queued_at,llm_snapshot_required,llm_credential_grant_required,
+venue,symbol,request_timeframe,data_timeframe,engine_timeframe,
 requested_as_of,seed_source_snapshot,seed_source_hash) VALUES
-(%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+(%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',%s,%s,%s,TRUE,TRUE,%s,%s,%s,%s,%s,%s,%s,%s)
 ON CONFLICT(owner_account_id,idempotency_key) DO NOTHING RETURNING {_COLUMNS},request_hash""",
             (
                 run_id,
