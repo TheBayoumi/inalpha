@@ -1,10 +1,8 @@
-# infra
+# Inalpha 基础设施
 
-容器与数据库的基础设施。
+本目录维护开发数据库、缓存和 Alembic migrations；完整自托管编排在仓库根目录。
 
 ## Docker 自托管全栈
-
-完整自托管入口在仓库根目录运行，不使用本目录的开发数据库 Compose：
 
 ```bash
 bash scripts/selfhost.sh init
@@ -12,62 +10,60 @@ bash scripts/selfhost.sh up
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
-它启动 PostgreSQL、Redis、迁移、四个 Python service、Mastra 与 Dashboard。Dashboard 仅绑定宿主机 `127.0.0.1:3001`；若要远程访问，应由部署者的 Caddy、Nginx 或 Tunnel 提供 HTTPS，并且只能代理 Dashboard。详细的用户级 LLM API key 配置与安全边界见根目录 README。
+完整栈包含 PostgreSQL、Redis、migration、五个 Python services（data / paper / research /
+factor / evolver）、Mastra 与 Dashboard。Dashboard 只绑定宿主机 `127.0.0.1:3001`；远程访问
+应由部署者的 Caddy、Nginx 或 Tunnel 提供 HTTPS，并只代理 Dashboard。用户级 LLM key、
+逐用户 JWT 与 Evolver 即时凭证边界见根目录 README。
 
 ## 开发数据库与缓存
 
 ```bash
 cd infra
-cp .env.example .env          # 改 POSTGRES_PASSWORD
+cp .env.example .env          # 设置开发数据库密码
 docker compose up -d
-docker compose ps             # 应看到 postgres / redis 都 healthy
+docker compose ps             # postgres / redis 应为 healthy
 ```
 
-## 跑数据库迁移
+模板的本地密码与端口和仓库根 `.env.example` 一致；如果修改 `POSTGRES_PASSWORD` 或
+`POSTGRES_PORT`，也要同步更新根 `.env` 中的 `DATABASE_URL`。
 
-第一次：
+## 数据库迁移
+
+首次安装与任何拉取新 migration 后都升级到当前 head；`scripts/dev.sh` 不会自动迁移。
 
 ```bash
 cd infra/migrations
-uv sync                       # 创建 .venv，安装 alembic + psycopg
-uv run alembic upgrade head   # 应用 0001_initial_schema
+uv sync
+uv run alembic upgrade head
+uv run alembic current
 ```
 
-后续新增表 / 改字段：
+新增 schema：
 
 ```bash
-cd infra/migrations
-uv run alembic revision -m "add foo column"   # 生成新 version 文件
-# 编辑 versions/<rev>_add_foo_column.py 的 upgrade() / downgrade()
+uv run alembic revision -m "add foo column"
+# 编辑 versions/<revision>_add_foo_column.py 的 upgrade() / downgrade()
 uv run alembic upgrade head
 ```
+
+当前 schema 除 bars/ticks 等时序数据外，还承载账户/持仓/订单、trade plans 与审批、回测和
+live runner、factor/research 记录、用户与加密 LLM 配置，以及 evolution runs/candidates。
+不要在文档或脚本中假定固定 migration 编号或完整表清单，以 `alembic current` 与 `\dt` 为准。
 
 ## 验证
 
 ```bash
-# 进 postgres 看 timescaledb 装好了没
-docker compose exec postgres psql -U quant -d Inalpha -c "\dx"
-# 应有 timescaledb 行
-
-# 看表都建了没
-docker compose exec postgres psql -U quant -d Inalpha -c "\dt"
-# 应看到 bars / ticks / strategies / backtest_runs / strategy_instances /
-#       orders / research_memory + alembic_version
-
-# 看时序表是不是 hypertable
-docker compose exec postgres psql -U quant -d Inalpha -c \
+docker compose exec postgres psql -U quant -d inalpha -c "\dx"
+docker compose exec postgres psql -U quant -d inalpha -c "\dt"
+docker compose exec postgres psql -U quant -d inalpha -c \
   "SELECT hypertable_name FROM timescaledb_information.hypertables"
-# 应有 bars / ticks
 ```
 
-## 清理（小心，会删数据）
+TimescaleDB extension 应存在；hypertable 至少包括 bars/ticks。架构和当前阶段分别见
+[`docs/01-architecture-overview.md`](../docs/01-architecture-overview.md) 与
+[`docs/04-current-state.md`](../docs/04-current-state.md)。
 
-```bash
-docker compose down            # 停容器但保留数据 volume
-docker compose down -v         # 连数据 volume 一起删（开发期重置可用）
-```
+## 清理
 
-## 参考
-
-- 表结构详细说明：`docs/decisions/0003-timeseries-db.md`
-- 整体架构：`docs/03-kernel-design.md`
+`docker compose down` 只停止容器并保留 volume。`docker compose down -v` 会永久删除开发
+数据库 volume，只能在明确要重建本地数据时使用。

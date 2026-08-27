@@ -1,72 +1,71 @@
 # @inalpha/orchestration
 
-Mastra 编排层 —— 把后端 service 包装成 LLM agent 能调用的 tool。
+Mastra / TypeScript 编排层：把 Python services 和外部 MCP 包装成 agent tools，并统一执行
+身份传递、permissions、hooks、plan/exec、审批、调度、skills 和可观测性。
 
-## D-7 范围（当前轮）
+## 当前职责
 
-- ✅ HTTP client 封装（调 `services/data` + `services/paper`）
-- ✅ Tool 层（5 个：`data.get_bars` / `data.backfill_bars` / `paper.list_strategies` /
-  `paper.run_backtest` / `paper.health`）
-- ✅ JWT 工具（mint / verify）
-- ✅ Vitest 单测 + CLI smoke test（真服务 e2e）
+- **Agent 路由**：orchestrator 协调 trader、risk、research-hub，并按市场分类选择数据源。
+- **Tool 族**：`data.*` / `web.*` / `factor.*` / `research.*` / `paper.*` / `trade.*` /
+  `evolver.*` / `swarm.*` / `skill.*` / `risk.*` / `scheduler.*` / `divination.*` /
+  `sandbox.*`，以及可插拔 `mcp__<server>__<verb>`。
+- **交易护栏**：`create_plan → approve_plan → execute_plan`；计划和审批事实由 paper DB
+  持久化；模型只能转交审批 tool 返回的一次性 approval token，没有直下单 tool。
+- **演化入口**：`evolver.run_evolution` 在产生 LLM 费用前要求逐次授权；查询和取消 tools
+  始终透传当前用户 JWT。Evolver 只产出候选，不自动 promote / start / order。
+- **运行时治理**：Pre/Post tool hooks、allow/ask/deny permissions、scheduler、agent eval、
+  prompt cache、trace 和领域错误码透传。
 
-后续：
+## 本地开发
 
-- D-8：起 Mastra `Agent` 实例，挂载 tool；接 CopilotKit / AG-UI 给前端用
-- D-8+：[ADR-0010 hooks](../../docs/decisions/0010-orchestration-hooks.md) /
-  [ADR-0011 permissions](../../docs/decisions/0011-permission-rules.md) /
-  [ADR-0012 plan-exec](../../docs/decisions/0012-plan-exec-separation.md) 落地
-- D-9+：[ADR-0014 prompt cache](../../docs/decisions/0014-prompt-cache-engineering.md) /
-  [ADR-0015 telemetry](../../docs/decisions/0015-agent-telemetry-standard.md)
-- D-10+：[ADR-0009 MCP](../../docs/decisions/0009-mcp-as-tool-protocol.md) 接 broker
-
-## 开发
-
-前置：
+推荐从仓库根启动完整依赖：
 
 ```bash
-# 1. 起 docker + 跑 alembic（D-1）
-cd infra && docker compose up -d && cd migrations && uv sync && uv run alembic upgrade head
-
-# 2. 起两个 Python service
-cd services/data  && uv sync && uv run uvicorn inalpha_data.main:app  --port 8001 &
-cd services/paper && uv sync && uv run uvicorn inalpha_paper.main:app --port 8002 &
+cd packages/orchestration && pnpm i && cd ../..
+for service in data paper research factor evolver; do
+  (cd "services/$service" && uv sync)
+done
+cp .env.example .env && cp infra/.env.example infra/.env
+(cd infra && docker compose up -d)
+(cd infra/migrations && uv sync && uv run alembic upgrade head)
+bash scripts/dev.sh
 ```
 
-然后：
+只开发编排层时：
 
 ```bash
 cd packages/orchestration
-cp .env.example .env   # JWT_SECRET 必须和服务端一致
 pnpm install
-pnpm test              # vitest 单测（mock fetch）
-pnpm typecheck         # tsc --noEmit
-pnpm smoke             # 真服务 e2e：backfill → run_backtest → 打印报告
+pnpm dev
+pnpm typecheck
+pnpm vitest run
 ```
 
-## Skills（投研方法论按需加载）
+服务地址、`JWT_SECRET`、LLM provider/model 与 `EVOLVER_SERVICE_URL` 统一从仓库根 `.env`
+读取。用户对话转发用户 JWT；后台用途的 token 必须短时、用途限定并绑定必要 scope。
 
-`skills/<name>/` 下放 AgentSkills 格式的方法论包（`SKILL.md` + YAML frontmatter +
-`references/`）。frontmatter 的 `name`（必须 = 目录名，kebab-case）+ `description`
-（≤1024 字符，意图模式描述，**不写死触发短语**）会进 orchestrator system prompt 的
-`<skills>` 清单；正文经 `skill.read` tool 按需加载。
+## Tool 设计约束
 
-新增 skill 检查单：
+- tool 是 HTTP/MCP 的薄适配层：Zod 校验、身份传递、错误标准化，不复制 Python 业务逻辑。
+- description 必须写清“功能 + 何时用 + 何时不用 + 坑”。
+- 用户可见错误保留稳定 `code`，让 agent 可以分辨重试、降级与需人工处理的状态。
+- 新增高风险或有费用的操作时，先设计 owner scope、幂等键、approval 与领域审计事实。
+- 任何新增直下单路径、绕过 plan/exec，或让模型绕过 approve 获取 / 复用审批 token 的改动
+  都不接受。
 
-1. 只放 `.md/.json/.txt` 文本；`scripts/` 不会被加载（信任边界）
-2. 外来 skill 全文改写：市场无关化、"查数据"步骤映射到本仓库 tool（web.* / data.* /
-   factor.* / research.*）、保留上游 LICENSE + 写 ATTRIBUTION.md
-3. 不引用仓库私有路径；`pnpm test`（tests/skills.test.ts 体检）+
-   `bash ../../scripts/check-consistency.sh`（C7）必须过
-4. **新增/修改 skill 后必须重启 orchestration 进程**——清单进程内 memoize
-   （`getSkillManifestsCached`），mastra dev 只 watch 代码不 watch skills/*.md，
-   不重启的话新 skill 不会出现在 `<skills>` 清单里
+## Skills
 
-## 设计原则
+`skills/<name>/` 使用 AgentSkills 结构（`SKILL.md` + YAML frontmatter + 可选
+`references/`）。frontmatter 的 `name` 必须等于 kebab-case 目录名，`description` 按意图模式
+描述且不写死触发短语。
 
-- **薄包装**：tool = HTTP client 调用 + Zod schema 校验，**不带业务逻辑**
-- **JWT 透传 / 服务签名两种模式**：用户对话场景 forward 用户 token；后台任务 / cron
-  用 `mintServiceToken()` 自签
-- **错误码透传**：上游 `{code, message, details}` 原样回给 LLM，让模型基于错误码决策
-- **Tool description 写"何时用 / 何时不用 / 坑"**（详见
-  [docs/05-tool-skill-discipline.md](../../docs/05-tool-skill-discipline.md)）
+新增或修改 skill 时：
+
+1. 只加载 `.md/.json/.txt`；外来 skill 的 `scripts/` 不执行。
+2. 改写为市场无关的方法论，数据步骤映射到现有 tools，并保留 LICENSE/ATTRIBUTION。
+3. 运行 `pnpm vitest run` 与 `bash ../../scripts/check-consistency.sh`。
+4. 重启 orchestration；skill manifest 在进程内缓存，热更新不会刷新清单。
+
+更完整的架构和当前阶段见
+[`docs/01-architecture-overview.md`](../../docs/01-architecture-overview.md) 与
+[`docs/04-current-state.md`](../../docs/04-current-state.md)。

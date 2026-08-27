@@ -41,13 +41,13 @@ Several capability lines sit on top of that harness:
 - **Factor lab + factor timing** — agents formalize, compute, IC-test, multiple-testing-check, and register factors, and rank them by time-series Rank IC to time entries; every hypothesis is logged with author, timestamp, and the economic-story gate decision.
 - **Multi-perspective research** — a deep dive convenes technical / fundamental / sentiment analysts, plus an optional panel of investing legends (Buffett / Lynch / Wood / Burry / Druckenmiller / Marks) for opposing views that feed a synthesis.
 - **Risk engine** — declarative rules (notional caps, price deviation, drawdown veto) enforced at the HTTP boundary, not in prompts.
-- **Strategy evolution** — LLMs mutate full Python source; three sandbox gates (AST audit, subprocess isolation, `Strategy` protocol contract) precede any candidate run; multi-objective fitness (Sharpe + Calmar − turnover − drawdown) so no metric can be gamed alone.
+- **Strategy evolution** — LLMs mutate full Python source through auditable unified diffs; AST audit, restricted loading, subprocess execution, and the `Strategy` protocol contract precede evaluation; multi-objective fitness (Sharpe + Calmar − turnover − drawdown) keeps one metric from dominating.
 - **Machine-approved orders (no direct LLM path)** — order intents go `trade.create_plan → approve → execute_plan` with a single-use, TTL-bound `approval_token`; the LLM has no direct path to placing an order, and every step is logged into the audit trail.
 - **Inari Omikuji — a shrine fortune draw (playful easter egg)** — undecided on direction? Cast a hexagram or draw a tarot card for a vantage outside the data; **hard-walled from decisions**, it can't touch risk, orders, or factors (see Core Capabilities §7).
 
 The name combines **Ina**ri (the Japanese fox deity of prosperity) with **alpha** (the quant term for excess return) — a companion that reads your direction and keeps every step on the record.
 
-> **Status:** Inalpha is in **alpha** — 79 factors with lineage & decay watch (alert-only, no auto-trim), a restricted-DSL factor-discovery L1, and a three-party research debate, on top of multi-market paper trading (cross-currency cash + a live runner that auto-runs promoted strategies on live bars), multi-market data, and LLM-authored strategies + risk engine. Read the code, weigh in on design — **do not run this against real money** (real-money trading is out of scope).
+> **Status:** Inalpha is in **alpha** — 79 factors with lineage & decay watch, restricted-DSL factor discovery, a three-party research debate, multi-market paper trading, and an E1 strategy-evolution service. Each evolution run requires explicit approval, freezes its dataset and non-secret LLM/pricing snapshot, and never auto-promotes or starts a candidate. Read the code, weigh in on design — **do not run this against real money** (real-money trading is out of scope).
 
 ---
 
@@ -118,9 +118,9 @@ Three software layers over one data layer. A request flows down; results flow ba
 
 **L1 · User entry.** The Operator Console (`apps/dashboard`) is the home base, with a docked agent chat. The `mastra dev` playground is there for live trace; direct CLI tool calls still work.
 
-**L2 · Orchestration** — `packages/orchestration` (Mastra · TypeScript). The one layer LLMs run in: a single orchestrator agent, wrapped in its harness — tools, hook/permission middleware, the in-memory plan store, conversation memory, and telemetry.
+**L2 · Orchestration** — `packages/orchestration` (Mastra · TypeScript). The one layer LLMs run in: a single orchestrator agent wrapped in tools, hook/permission middleware, DB-backed plan/approval state, conversation memory, and telemetry.
 
-**L3 · Kernel services** — Python · FastAPI. Four independent, stateful processes, each owning one job:
+**L3 · Kernel services** — Python · FastAPI. Five independent services, each owning one job:
 
 | Service | Owns |
 |---|---|
@@ -128,10 +128,11 @@ Three software layers over one data layer. A request flows down; results flow ba
 | `services/paper` | The event-driven kernel — backtest + paper on the **same code** — plus the LLM-authored-strategy sandbox and the live runner. |
 | `services/research` | Multi-agent deep dive: 6 analysts in parallel, then a bull / bear / risk debate (triggered only when they disagree, with a soft early-stop and the decision chain persisted for replay). |
 | `services/factor` | The factor library (pandas-ta / Alpha101 / qlib + FRED macro): IC screening, current-effective factor timing, lineage & decay watch, DSL factor discovery. **Signals only — never places an order.** |
+| `services/evolver` | Owner-scoped E1 strategy evolution: unified-diff mutation, frozen-data evaluation, candidate/run lineage, cost accounting, and an explicit approval boundary. **Never auto-promotes, starts, or trades a candidate.** |
 
 **L4 · Persistence & external.** Postgres + TimescaleDB holds all time-series and business state. External venues span crypto, US / A-share / HK and other Asian & European single-name equities, global indices, and FRED macro — the orchestrator routes each venue automatically by market type.
 
-The strategy-evolution loop runs asynchronously alongside the runtime; winners are promoted back into `services/paper` for backtest evaluation (sandbox gates, fitness function, and the E1 → E4 ramp are in [Core Capabilities §3](#3-strategy-evolution--let-strategies-write-better-versions-of-themselves)). See [`docs/04-current-state.md`](docs/04-current-state.md) for the live module inventory and what's still in flight.
+The strategy-evolution loop runs asynchronously alongside the runtime. It persists and ranks candidates inside `services/evolver`; moving a selected candidate into the Paper strategy lifecycle remains a separate, explicitly approved action — there is no automatic promotion (sandbox gates, fitness function, and the E1 → E4 ramp are in [Core Capabilities §3](#3-strategy-evolution--let-strategies-write-better-versions-of-themselves)). See [`docs/04-current-state.md`](docs/04-current-state.md) for the live module inventory and what's still in flight.
 
 ---
 
@@ -165,13 +166,14 @@ Letting an LLM call `submit_order` directly is how you lose money fast. Telling 
 
 Human-written strategies hit a velocity ceiling, and parameter tuning can only adjust dials — it cannot discover a structural change like "add an RSI filter to the SMA cross." Inalpha lets an LLM rewrite the strategy's Python source, then puts every candidate through hard gates before it ever touches a backtest.
 
-- **Full source, optionally from a vetted archetype.** The LLM authors the strategy's complete Python source — it can start from a pre-validated archetype skeleton to cut protocol errors — then iterates against the last backtest report. (Small-diff / unified-diff mutation arrives with E2.)
-- **Three sandbox gates.** A static code audit, an isolated subprocess run, and a final check that the result still satisfies the `Strategy` interface. Malicious or malformed code never reaches the backtest.
-- **Balanced fitness, baseline-checked.** Candidates are scored on a balanced fitness (return + risk-adjusted return − turnover − drawdown veto), and each is auto-raced against a buy-and-hold baseline — a high score has to beat just holding, not a single Sharpe number. (The MAP-Elites behavioral grid that keeps the population diverse is part of E2.)
+- **Full source with auditable mutations.** The run starts from a vetted built-in or owner-owned promoted strategy, asks the LLM for a unified diff, applies it with bounded fuzz, and persists both the parent snapshot and diff.
+- **Layered execution gates.** A static AST audit, restricted loader, subprocess evaluation, and final `Strategy` contract check reject malformed candidates. The subprocess boundary keeps CPU work away from the API loop; it is not presented as a hardened container or VM sandbox.
+- **Balanced fitness, baseline-checked.** Candidates are scored on a balanced fitness (return + risk-adjusted return − turnover − drawdown veto), and each is auto-raced against a buy-and-hold baseline — a high score has to beat just holding, not a single Sharpe number. MAP-Elites-style diversity control is deferred until after the narrower E2 loop and only if real runs justify it.
 - **Cross-validated, not a single lucky split.** A candidate can run time-series cross-validation — WalkForward / Purged K-Fold / Combinatorial Purged CV with a Deflated Sharpe — so an edge has to hold across many out-of-sample paths instead of one window, with the test fold always reaching the latest bar.
-- **Reproducible end to end.** Each candidate's parent, prompt, sandbox verdict, and scores are versioned — the entire lineage can be replayed later.
+- **Reproducible end to end.** One run freezes `as_of`, the closed-bar dataset manifest/hash, seed source, baseline, candidate source/diff, evaluation snapshots, and non-secret LLM/provider/pricing metadata. The user's encrypted API key is resolved only for that owner and never stored in the run.
+- **Explicitly authorized and non-promoting.** Starting a run requires a trusted approval bound to the owner, operation ID, request, estimated cost, and frozen LLM snapshot. Completion never promotes, starts, or routes a candidate into the order path.
 
-> Ships as E1 (single-generation closed loop) in D-9 and ramps to E4 (loop exposed to the orchestrator as a single MCP tool), with two weeks of stable operation required between tiers.
+> E1 now runs as the separate `services/evolver` service on port 8005. E2 is intentionally narrower than the original research plan: best-parent multi-generation selection plus early stopping first; MAP-Elites and Island Model wait for real run data to justify the complexity.
 
 ### 4. Swarm — run dozens of backtests in parallel
 
@@ -230,6 +232,8 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 | ✅ Shipped | Plan/Exec audit trail + Hooks + Permission Engine | D-8a | three-step orders · one-shot signing token · 5 lifecycle hook events · allow / ask / deny tri-state |
 | ✅ Shipped | Research → strategy → backtest lineage | D-8c | `deep_dive → compose_strategy → run_backtest` with `research_id` / `backtest_id` threaded through |
 | ✅ Shipped | LLM-authored strategies — E1 MVP | D-9 | three sandbox gates (AST · subprocess · `Strategy` contract) + multi-objective fitness + baseline auto-run |
+| ✅ Shipped | Strategy evolution — E1 production loop | E1 | `services/evolver:8005` · explicit cost-bearing approval · unified-diff mutation · frozen dataset/hash · seed/baseline/candidates evaluated on the same bars · owner-scoped async run/slot state |
+| ⏭️ In flight | Frozen LLM approval snapshot | E1 closure | approval binds owner + operation ID + model/pricing digest · encrypted owner credential resolved just-in-time · per-slot token/cost accounting, including rejected mutations |
 | ✅ Shipped | Risk engine at the HTTP boundary | D-9 | declarative `risk_rules.toml` · pre-trade `enforce` · `risk_locks` table with independent commit |
 | ✅ Shipped | Bull / bear researcher debate | D-9 | opposing-stance researchers under `services/research` |
 | ✅ Shipped | Scheduler / cron agent mode | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` management plane |
@@ -251,7 +255,7 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 | ✅ Shipped | Cross-sectional factor scoring | D-12 | `factor.panel_score` · `POST /panel/score` · cross-sectional Rank IC (rank the pool each period vs forward cross-sectional return) · native Alpha101 a1/a3 · orthogonal to single-name timing |
 | ✅ Shipped | Time-series cross-validation — anti-overfitting | D-12 | WalkForward / PurgedKFold / Combinatorial Purged CV + Deflated Sharpe · `POST /backtest/cv` · test fold always includes the latest bar · auto-fallback to walk-forward when samples are short |
 | ✅ Shipped | Point-in-time fundamentals | D-12 | Baostock financials filtered by actual publication date · `GET /fundamentals?as_of=` · prevents look-ahead (yfinance v1 not yet PIT, explicitly flagged) |
-| 🗓️ Planned | Strategy evolution — E2 | E2 | multi-generation loop + MAP-Elites + Island Model + `unified-diff` mutations (E1 single-generation closed loop already shipped in D-9) |
+| 🗓️ Planned | Strategy evolution — E2 | E2 | best-parent multi-generation loop + early stopping; MAP-Elites / Island Model deferred until real run data shows a diversity problem |
 | 🗓️ Planned | Factor discovery — L2 / L3 | L2 / L3 | multi-agent factor crew (L2) + weekly automated scans (L3), on top of the L1 DSL pipeline already shipped |
 | 🗓️ Planned | Automated decay handling | TBD | reflection-driven backtest + auto-trim of decaying factors — today the decay patrol only alerts, never moves the book |
 | 🔬 Exploring | Alpha Zoo cold start | E1+ | seed factor library with public alphas (Qlib / Kakushadze / GTJA) |
@@ -278,7 +282,7 @@ Where each capability stands today. Live module inventory and the end-to-end dec
 
 ### Docker self-hosting (recommended)
 
-This is the supported Docker path for a personal server or local machine. It builds the complete stack locally: PostgreSQL/TimescaleDB, Redis, migrations, data, paper, research, factor, Mastra, and the Operator Console.
+This is the supported Docker path for a personal server or local machine. It builds the complete stack locally: PostgreSQL/TimescaleDB, Redis, migrations, data, paper, research, factor, evolver, Mastra, and the Operator Console.
 
 Prerequisites: Docker Engine with Docker Compose v2, Git, and OpenSSL. Clone the repository, then initialize the local-only environment file and start the stack:
 
@@ -295,7 +299,7 @@ The console is available only on the host at <http://127.0.0.1:3001>. Wait until
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
-Sign in at <http://127.0.0.1:3001>, open **LLM Settings**, and add your provider, model, and personal API key. Every authenticated user supplies their own key; it is encrypted in the database with `LLM_CONFIG_ENCRYPTION_KEY`. Do not add provider API keys to `infra/.env.selfhost`: authenticated production mode deliberately has no shared system-key fallback.
+Sign in at <http://127.0.0.1:3001>, open **LLM Settings**, and add your provider, model, and personal API key. The Dashboard encrypts it with `LLM_CONFIG_ENCRYPTION_KEY`; the orchestrator and Evolver resolve that owner-scoped credential. The standalone Research service still uses the deployment-level `LLM_PROVIDER` / `LLM_MODEL` and matching provider key in `infra/.env.selfhost`, so configure that block if you need deep dives and treat it as a shared-credential boundary until per-owner propagation lands.
 
 Useful operations:
 
@@ -314,8 +318,10 @@ The self-host Compose file intentionally exposes only `127.0.0.1:3001`. For remo
 ### 1 · Install dependencies
 
 ```bash
-pnpm i      # Node packages (packages/orchestration)
-uv sync     # Python packages (services/_shared, data, paper, research, factor)
+cd packages/orchestration && pnpm i && cd ../..
+for service in data paper research factor evolver; do
+  (cd "services/$service" && uv sync)
+done
 ```
 
 ### 2 · Configure your LLM key (required)
@@ -346,15 +352,26 @@ Override the default model by setting `LLM_MODEL=...` in the same file. Mastra a
 
 **Optional · FRED key for macro factors.** The factor library's macro factors (`macro.*` — rates, term & credit spreads, CPI, payrolls, real-economy, sentiment) read FRED data via `venue=fred`. Set `FRED_API_KEY` in `.env` to enable them — it's [free and instant](https://fred.stlouisfed.org/docs/api/api_key.html). Without a key the connector simply isn't registered and macro factors degrade gracefully (price/volume factors are unaffected). Note: macro factors are computed **only at `timeframe=1d/1wk`** — they're filtered out on intraday bars (monthly series would be a step function), so request `1d` to see them.
 
-### 3 · Start everything
+### 3 · Start PostgreSQL / Redis and migrate
 
 ```bash
-bash scripts/dev.sh             # one shot — data (8001) + paper (8002) + research (8003) + factor (8004) + mastra (4111)
+cp infra/.env.example infra/.env
+(cd infra && docker compose up -d)
+(cd infra/migrations && uv sync && uv run alembic upgrade head)
+```
+
+The local defaults in `infra/.env.example` and the repository-root `.env.example` are intentionally
+identical. If you change the database password or port, update both files before starting services.
+
+### 4 · Start all services
+
+```bash
+bash scripts/dev.sh             # one shot — data (8001) + paper (8002) + research (8003) + factor (8004) + evolver (8005) + mastra (4111)
 bash scripts/dev.sh logs        # follow service logs
 bash scripts/dev.sh stop        # stop everything
 ```
 
-### 4 · Open the Operator Console — your home base
+### 5 · Open the Operator Console — your home base
 
 The **Operator Console** is the recommended way to use Inalpha — your home base. A runtime
 dashboard surfaces everything you'd otherwise have to ask the agent for, at a glance:
@@ -370,18 +387,21 @@ pnpm dev         # → http://localhost:3001
 ```
 
 No extra config — the console reads the repo-root `.env` directly (backend URLs + `JWT_SECRET`
-are inherited), so as long as the services from step 3 are up, it just connects. It ships with
+are inherited), so as long as the services from step 4 are up, it just connects. It ships with
 **dark / light themes** (a terminal "Vermilion" aesthetic — see [`apps/dashboard/design.md`](apps/dashboard/design.md))
 and an `en / 中` switcher in the sidebar.
 
 > The console is the single front door: data, research, backtests, live runners, and the
 > conversation with the orchestrator now all live in one place.
 
-> Only the orchestrator (Mastra) and `services/research` consume your LLM key; `services/paper`
-> never calls an LLM directly. Prefer the manual three-terminal flow, or want the low-level live
+> The orchestrator and an explicitly approved `services/evolver` run can consume your owner-scoped
+> LLM key; `services/research` currently uses the deployment-level provider/key, and
+> `services/paper` never calls an LLM directly. Evolver resolves the encrypted credential just in
+> time and stores only the frozen non-secret config/pricing snapshot.
+> Prefer the manual multi-terminal flow, or want the low-level live
 > trace (the `mastra dev` playground at <http://127.0.0.1:4111>)? See [`AGENTS.md §4`](AGENTS.md).
 
-### 5 · Try asking
+### 6 · Try asking
 
 With the console up, talk to the orchestrator in the docked chat on the right — it replies in the language of your message. Each prompt below shows off a different part of the system:
 
@@ -390,6 +410,7 @@ With the console up, talk to the orchestrator in the docked chat on the right �
 - `Research TSLA with a Buffett and a Cathie Wood take.` — **investing-legends panel**: opt-in master personas argue in their own styles.
 - `Trace the AI-compute supply chain to its tightest bottleneck and surface the names worth researching first.` — **research-methodology skills**: auto-loads an external playbook (e.g. `serenity` supply-chain bottleneck, or `cn-equity-research` for A-shares).
 - `Design a mean-reversion strategy for ETH, backtest the last 6 months, and show its fitness vs buy-and-hold.` — **LLM-authored strategy**: the model writes the full source, it clears three sandbox gates, then auto-races a baseline.
+- `Evolve my promoted BTC strategy with one candidate and stop after this run.` — **E1 evolution**: shows the frozen model and estimated cost for approval, evaluates seed/baseline/candidate on one dataset hash, and leaves promotion as a separate human decision.
 - `Backtest momentum / mean-reversion / breakout across BTC, ETH, SOL for the last year and give me the Pareto frontier.` — **swarm**: dozens of backtests fanned out in parallel.
 - `Open a small NVDA position.` — **machine-approved orders**: watch it route through propose → approve → execute; the LLM has no direct path to placing an order.
 

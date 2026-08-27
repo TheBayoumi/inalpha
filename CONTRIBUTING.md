@@ -1,9 +1,9 @@
 # Contributing to Inalpha / 贡献指南
 
-> Inalpha is an experimental research framework in **alpha**. Phase D-11 has landed (multi-market paper trading: cross-currency cash + live runner); next up are research-hub (#6) and E2 strategy evolution (#7).
+> Inalpha is an experimental research framework in **alpha**. Phase D-12 and the E1 production evolution loop have landed; the next milestone is E2 best-parent multi-generation evolution (#7).
 > Before writing code, we strongly recommend reading: [`AGENTS.md`](AGENTS.md) · [`docs/00-context.md`](docs/00-context.md) · [`docs/01-architecture-overview.md`](docs/01-architecture-overview.md) · [`docs/04-current-state.md`](docs/04-current-state.md)
 >
-> Inalpha 是实验性研究框架，处于 **alpha** 阶段。Phase D-11 已落地（多市场模拟盘：跨币种 cash + live runner）；下一步是 research-hub（#6）与 E2 策略演化（#7）。
+> Inalpha 是实验性研究框架，处于 **alpha** 阶段。Phase D-12 与 E1 策略演化生产闭环已落地；下一里程碑是 E2 best-parent 多代演化（#7）。
 > 动手之前，强烈建议先读上述四份文档。
 
 ## 1. Before you start / 开始之前
@@ -30,16 +30,26 @@
 ## 3. Local setup / 本地起步
 
 ```bash
-pnpm i && uv sync
-bash scripts/dev.sh                 # data:8001 + paper:8002 + mastra:4111
+cd packages/orchestration && pnpm i && cd ../..
+for service in data paper research factor evolver; do
+  (cd "services/$service" && uv sync)
+done
+cp .env.example .env && cp infra/.env.example infra/.env
+(cd infra && docker compose up -d)
+(cd infra/migrations && uv sync && uv run alembic upgrade head)
+bash scripts/dev.sh                 # data:8001 … evolver:8005 + mastra:4111
 bash scripts/check-consistency.sh   # must pass before committing / 提交前必须 pass
 ```
 
 CI red lines — run locally before every push / CI 红线，push 前本地必跑（缺一不可）：
 
 ```bash
-pnpm typecheck && pnpm vitest run   # packages/orchestration
-uv run ruff check .                 # services/data | paper | research
+(cd packages/orchestration && pnpm typecheck && pnpm vitest run)
+for service in data paper research factor evolver; do
+  (cd "services/$service" && uv run ruff check .)
+done
+(cd services/paper && uv run pytest)
+(cd services/evolver && uv run pytest)
 bash scripts/check-consistency.sh
 ```
 
@@ -57,8 +67,8 @@ Use short kebab-case names / 任务分支建议短命名 + kebab-case：`feature
 
 **Must go through staging (high-risk)** / **必经 staging（高风险）**：
 
-- New strategy family, or large changes to `services/research/` / `services/paper/` / `packages/orchestration/`
-  新策略族，或上述三个核心模块的大改
+- New strategy family, or large changes to `services/research/` / `services/paper/` / `services/evolver/` / `packages/orchestration/`
+  新策略族，或上述核心模块的大改
 - New connector / venue / broker
   新 connector / 新 venue / 新 broker
 - Large orchestrator schema or agent prompt changes
@@ -94,7 +104,7 @@ feature/* → PR → main
 
 Every PR automatically triggers / 每个 PR 自动触发：
 
-1. **CI** — 6 required status checks / 6 个必填 status check（详 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)）
+1. **CI** — required checks defined by branch protection / 分支保护配置的必填检查（详 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)）
 2. **Claude PR Review** — non-blocking auto review / 非阻塞自动审查（详 [`.github/workflows/claude-review.yml`](.github/workflows/claude-review.yml)）
 3. **Cloudflare Pages preview deploy** — a unique URL per PR, posted in a comment / 每 PR 独立 URL，评论里贴出
 
@@ -105,7 +115,7 @@ Mentioning `@claude` in a PR / issue / review comment starts a conversation with
 
 `main` and `staging` are configured identically / `main` 与 `staging` 配置一致：
 
-- **6 required CI status checks** / **必填 6 个 CI status check**：`orchestration · typecheck + test` / `web · typecheck + build` / `Cross-file consistency check / 跨文件一致性检验` / `python services · ruff + mypy (data|paper|research)`
+- **Required CI checks** / **必填 CI 检查**：跨文件一致性、自托管 smoke、orchestration typecheck/test + agent eval、web/dashboard build、Python service lint/typecheck，以及 paper/evolver E1 pytest。具体 context 以仓库 branch protection 为准。
 - PR required, but `required_approving_review_count: 0` — solo project, avoids self-approval deadlock.
   必走 PR，但**不**强制 approval（单人项目，避免自批死锁）。
 - `allow_force_pushes: false` · `allow_deletions: false`
@@ -121,7 +131,7 @@ CI workflow 改 job 名时必须同步更新 protection 的 `contexts`，否则 
 - **Commit message**: Chinese, `<type>(<scope>): <desc>`; one logical change per commit — don't mix unrelated modules in one commit.
   **Commit message**：中文 + `<type>(<scope>): <desc>`；一次 commit 只做一件事，不要把不相关模块揉进同一个 commit。
 - **type**: `feat` / `fix` / `refactor` / `docs` / `test` / `chore` / `style` / `perf` / `ci`
-- **scope**: `data` / `paper` / `research` / `orchestration` / `web` / `docs` / `infra`, or a concrete module name / 或具体模块名
+- **scope**: `data` / `paper` / `research` / `factor` / `evolver` / `orchestration` / `dashboard` / `web` / `docs` / `infra`, or a concrete module name / 或具体模块名
 - A Phase tag is welcome / 可标 Phase D-N（例：`feat(paper): 跨币种 cash 账本 (D-11)`）
 - Check untracked files before committing — a missing `git add` for a newly imported file breaks CI.
   commit 前 `git status` 检查 untracked——新 import 的实现文件漏 add 会让 CI 挂。

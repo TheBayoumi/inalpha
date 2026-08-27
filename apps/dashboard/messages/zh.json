@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Inalpha · 操作者控制台",
-    "description": "Inalpha 模拟盘只读运行时看板。"
+    "description": "Inalpha 认证操作者控制台：对话、模拟盘、回测、演化与运行时治理。"
   },
   "nav": {
     "console": "操作者控制台",

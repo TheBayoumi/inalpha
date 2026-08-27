@@ -24,7 +24,7 @@
 
 - **不 fork** 任何单一开源项目，拆 4 个最具代表性的 repo 学各自最强的设计
 - **三层架构**：Next.js + CopilotKit（入口）→ Mastra / TypeScript（编排）→ Python services（内核）
-- **核心服务用 Python**：data / paper（回测+模拟盘内核）/ research / factor，跨服务走 HTTP / MCP
+- **核心服务用 Python**：data / paper（回测+模拟盘内核）/ research / factor / evolver，跨服务走 HTTP / MCP
 - **护栏借鉴 Claude Code**：hooks / permissions / plan-exec / 审计签名——数据层强制 > prompt 自律
 
 详见 [`01-architecture-overview.md`](./01-architecture-overview.md)。
@@ -38,7 +38,7 @@
 | **qlib** | DatasetH / Handler / Alpha / Model pipeline | ✅ `services/factor`（Alpha101 / IC 有效性） |
 | **TradingAgents** | 多 agent 角色分工 / 辩论 / 决策合成 | ✅ `services/research`（多 analyst + bull/bear 辩论） |
 
-## 当前完成度快照（2026-06-05）
+## 当前完成度快照（2026-08-27）
 
 > 完整逐项见 [`04-current-state.md`](./04-current-state.md)。
 
@@ -49,7 +49,10 @@
 | D-10 | 多市场数据：web 搜索 + 财报基本面 + 相对估值 analyst + MCP 生态兼容 | ✅ |
 | D-11 | 多市场模拟盘：跨币种 cash + live runner（按行情自动跑 + 机器审批 + 决策复盘） | ✅ |
 | D-11.1 / .2 | live runner 信任边界加固 + 运维收口（PnL 净口径 / TTL / build 退避） | ✅ |
-| 下一 | research-hub 嵌套 supervisor（#6）/ E2 多代演化 MAP-Elites（#7） | 🔲 |
+| D-12 | 因子血缘 + 衰减巡检 + monthly 宏观 + 因子发现 L1；research-hub 三方辩论收口 | ✅ |
+| E1 生产闭环 | 独立 Evolver：真实 frozen bars、单代 unified-diff 变异、显式审批、owner 隔离、异步持久化与可复现实验元数据 | ✅ |
+| E1 收口 | 冻结 LLM/定价快照、owner key 即时获取、token/cost 审计 | 🚧 当前分支 |
+| 下一 | E2 best-parent 多代选择 + early stopping（#7）；MAP-Elites / Island Model 后置 | 🔲 |
 
 ## 不做的事（边界）
 
@@ -66,6 +69,7 @@
 |---|---|---|
 | Phase A–B | 文档骨架 + 4 份 repo 深度拆解 | ✅ |
 | Phase C | Inalpha 自建内核架构（设计文档锁定 2026-05-21） | ✅ |
-| Phase D-8~D-11.2 | Plan/Exec 护栏 → LLM 自创策略 → 多市场数据 → 多市场模拟盘 + live runner | ✅ |
-| Phase E1 | LLM 自创策略 MVP（沙盒 + fitness） | ✅ |
-| Phase E2+ | 多代演化（MAP-Elites / Island Model）/ research-hub | 🔲 规划中 |
+| Phase D-8~D-12 | Plan/Exec 护栏 → 策略创作 → 多市场数据/模拟盘 → factor/research 闭环 | ✅ |
+| Phase E1 | 独立策略演化生产闭环（frozen dataset + unified diff + 显式审批 + 审计） | ✅，收口中 |
+| Phase E2 | best-parent 多代选择 + early stopping | 🔲 规划中 |
+| Phase E3+ | MAP-Elites / Island Model 等更复杂搜索 | 🔲 后置 |

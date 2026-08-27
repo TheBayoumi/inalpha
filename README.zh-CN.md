@@ -39,13 +39,13 @@ Inalpha 是一个**用工程纪律驱动的专业量化 agent 框架**。它不�
 - **因子实验室 + 有效因子择时。** Agent 负责 formalize、compute、IC 检验、多重检验校正、register；并按时序 Rank IC 挑出当前有效的因子来择时。每个假设都带作者、时间戳与经济故事门的判定记录。
 - **多视角研究。** 一次深度研究叫上技术 / 基本面 / 情绪 analyst，外加可选的"投资大师团"（巴菲特 / 林奇 / 伍德 / 伯里 / 德鲁肯米勒 / 马克斯）形成对立视角，再汇成综合判断。
 - **风控引擎。** 仓位上限、价格偏离、回撤一票否决等规则在 HTTP 边界声明式生效，不写在 prompt 里。
-- **策略进化。** LLM 变异完整 Python 源码，三道沙盒（AST 审计 / 子进程隔离 / `Strategy` 协议契约）先于任何候选回测；多目标 fitness（Sharpe + Calmar − turnover − drawdown 一票否决），单一指标卷不了。
+- **策略进化。** LLM 通过可审计的 unified diff 变异完整 Python 源码；AST 审计、受限加载、子进程执行与 `Strategy` 协议契约先于评估；多目标 fitness（Sharpe + Calmar − turnover − drawdown 一票否决），单一指标卷不了。
 - **机器审批下单（LLM 不直连）。** 下单意图走 `trade.create_plan → approve → execute_plan`，配一次性、短 TTL 的 `approval_token`；LLM **没有**直接下单路径，每一步留痕成审计链。
 - **狐神签（趣味彩蛋）。** 方向犹豫时求一卦 / 抽张塔罗，给个数据之外的参照视角；**硬隔离于决策**，风控 / 下单 / 因子都碰不到（详见下方核心能力 §7）。
 
 项目命名取自日本稻荷狐神 **Ina**ri 与量化术语 **alpha**：一个会替你问卜方向、又把每一步记上账的量化伙伴。
 
-> **当前状态：** Inalpha 处于 **alpha** 阶段——79 因子配血缘 + 衰减巡检（只告警、不自动剔）、受限 DSL 的因子发现 L1，以及三方制研究辩论；建立在多市场模拟盘（跨币种 cash + live runner 让 promoted 策略按行情自动跑）、多市场数据、LLM 自创策略 + 风控引擎之上。欢迎读代码、参与设计——**请勿用真实资金跑**（真钱实盘不在当前计划）。
+> **当前状态：** Inalpha 处于 **alpha** 阶段——79 因子配血缘 + 衰减巡检、受限 DSL 因子发现、三方制研究辩论、多市场模拟盘，以及独立的 E1 策略演化服务。每次演化都要显式审批，冻结数据集与非敏感 LLM/计价快照，且绝不自动 promote 或启动候选。欢迎读代码、参与设计——**请勿用真实资金跑**（真钱实盘不在当前计划）。
 
 ---
 
@@ -116,9 +116,9 @@ Inalpha 是一个**用工程纪律驱动的专业量化 agent 框架**。它不�
 
 **L1 · 用户入口。** 操作者控制台（`apps/dashboard`）是主入口，右侧内嵌 agent 对话栏；也可用 `mastra dev` playground 看 live trace，或直接调 tool CLI。
 
-**L2 · 编排层** —— `packages/orchestration`（Mastra · TypeScript）。**LLM 唯一运行的一层**：一个 orchestrator agent，外裹一整套护栏——tools、hook/permission 中间件、in-memory plan store、对话 memory、telemetry。
+**L2 · 编排层** —— `packages/orchestration`（Mastra · TypeScript）。**LLM 唯一运行的一层**：一个 orchestrator agent，外裹 tools、hook/permission 中间件、DB 持久化的 plan/审批状态、对话 memory 与 telemetry。
 
-**L3 · 内核服务** —— Python · FastAPI。四个独立的有状态进程，各管一摊：
+**L3 · 内核服务** —— Python · FastAPI。五个独立服务，各管一摊：
 
 | 服务 | 负责 |
 |---|---|
@@ -126,10 +126,11 @@ Inalpha 是一个**用工程纪律驱动的专业量化 agent 框架**。它不�
 | `services/paper` | 事件驱动内核——回测 + 模拟盘**共用同一份代码**——外加 LLM 自创策略沙盒与 live runner。 |
 | `services/research` | 多 agent 深度研究：6 analyst 并行，再走 bull / bear / risk 辩论（只在分歧时才触发，配软早停，决策链路全程落盘可复盘）。 |
 | `services/factor` | 因子库（pandas-ta / Alpha101 / qlib + FRED 宏观）：IC 检验、当前有效因子择时、血缘衰减巡检、DSL 因子发现。**只产出信号——绝不下单。** |
+| `services/evolver` | owner 隔离的 E1 策略演化：unified-diff 变异、冻结数据评估、run/candidate 血缘、费用记账与显式审批边界。**绝不自动 promote、启动或下单。** |
 
 **L4 · 持久化 + 外部依赖。** Postgres + TimescaleDB 承载全部时序与业务状态。外部行情覆盖 crypto、美股 / A股 / 港股 及日欧等单股市场、全球指数、FRED 宏观——orchestrator 按市场类型自动路由每个 venue。
 
-进化循环与 runtime 并行异步运行，胜出策略推回 `services/paper` 跑回测评估（沙盒门、fitness 函数、E1 → E4 渐进路径见下方[核心能力 §3](#3-策略进化--让策略写出更好的下一代)）。当前已落地模块清单、未完成项、决策链路 sequence diagram 见 [`docs/04-current-state.md`](docs/04-current-state.md)。
+进化循环与 runtime 并行异步运行，候选在 `services/evolver` 内持久化并排序；把用户选中的候选纳入 Paper 策略生命周期仍是另一项需要显式审批的操作，系统不会自动 promote（沙盒门、fitness 函数、E1 → E4 渐进路径见下方[核心能力 §3](#3-策略进化--让策略写出更好的下一代)）。当前已落地模块清单、未完成项、决策链路 sequence diagram 见 [`docs/04-current-state.md`](docs/04-current-state.md)。
 
 ---
 
@@ -163,13 +164,14 @@ Inalpha 是一个**用工程纪律驱动的专业量化 agent 框架**。它不�
 
 人工写策略有速度上限；传统调参只能转旋钮，发现不了"在 SMA 交叉里加一个 RSI 过滤"这种结构性创新。Inalpha 让 LLM 直接改 Python 源码，但每个候选都必须先过沙盒，才能跑回测。
 
-- **写的是整段源码，可从已验证原型起步。** LLM 直接产出策略的完整 Python 源码——可从一个预先验证过的 archetype 骨架起步、降低协议踩坑——再对着上一次回测报告迭代。（小 diff / unified-diff 变异随 E2 到来。）
-- **回测之前三道沙盒。** 静态代码审查、子进程隔离运行、`Strategy` 接口契约校验——恶意或残缺代码根本到不了回测引擎。
-- **均衡 fitness，且对照基线。** 候选按"收益 + 风险调整后收益 − 换手率 − 回撤一票否决"综合打分，并各自与 buy-and-hold 基线自动并跑——高分必须真的跑赢"光是持有"，不是只卷一个 Sharpe 数。（保留种群多样性的 MAP-Elites 行为网格属 E2。）
+- **完整源码 + 可审计变异。** Run 从内置或 owner 自己已 promoted 的策略起步，LLM 只返回 unified diff；系统以有界 fuzz 应用，并同时保存父源码快照与 diff。
+- **分层执行门。** 静态 AST 审计、受限 loader、子进程评估、最终 `Strategy` 协议检查共同拒绝畸形候选。子进程负责把 CPU 重活与 API loop 隔开，不把它宣传成容器 / VM 级硬沙盒。
+- **均衡 fitness，且对照基线。** 候选按"收益 + 风险调整后收益 − 换手率 − 回撤一票否决"综合打分，并各自与 buy-and-hold 基线自动并跑——高分必须真的跑赢"光是持有"，不是只卷一个 Sharpe 数。MAP-Elites 一类多样性控制后置到收窄版 E2 之后，且只有真实 run 证明有必要才引入。
 - **交叉验证，不靠单段走运。** 候选可跑时序交叉验证——WalkForward / Purged K-Fold / Combinatorial Purged CV 配 Deflated Sharpe——让 edge 必须在多条样本外路径上都站得住，而非靠一段窗口走运，且 test 段始终覆盖到最新 bar。
-- **端到端可复现。** 每个候选的父策略、prompt、沙盒判定、得分都有版本——整条进化链可重放。
+- **端到端可复现。** 每个 run 冻结 `as_of`、已收盘 bar 的 manifest/hash、种子源码、基线、候选源码/diff、评估快照与非敏感 LLM/provider/计价元数据。用户加密 API key 只按 owner 临时解析，不写入 run。
+- **显式授权且绝不自动晋级。** Run 启动审批绑定 owner、operation ID、请求、预估费用和冻结 LLM 快照；完成后不会自动 promote、start，更不会进入下单路径。
 
-> D-9 上线 E1（单代闭环），目标渐进到 E4（进化循环作为单个 MCP tool 暴露给 orchestrator）；每一级要稳定运行 2 周才升下一级。
+> E1 已拆成独立的 `services/evolver:8005`。E2 先只做 best-parent 多代选择 + early stopping；MAP-Elites / Island Model 等真实 run 数据证明存在多样性问题后再引入。
 
 ### 4. Swarm · 一次跑几十个回测
 
@@ -228,6 +230,8 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 | ✅ 已上线 | Plan/Exec 审计链 + Hooks + Permission Engine | D-8a | 三步下单 · 一次性签名 token · 5 类生命周期 hook · allow / ask / deny 三态 |
 | ✅ 已上线 | 研究 → 策略 → 回测 lineage | D-8c | `deep_dive → compose_strategy → run_backtest` 全链路串 `research_id` / `backtest_id` |
 | ✅ 已上线 | LLM 自创策略 — E1 MVP | D-9 | 三道沙盒（AST 审计 / 子进程 / `Strategy` 协议契约） + 多目标 fitness + baseline 自动并跑 |
+| ✅ 已上线 | 策略演化 — E1 生产闭环 | E1 | `services/evolver:8005` · 计费动作显式审批 · unified-diff 变异 · 冻结数据集/hash · seed/baseline/candidate 同 bars 评估 · owner 隔离异步 run/slot 状态机 |
+| ⏭️ 进行中 | 冻结 LLM 审批快照 | E1 收口 | 审批绑定 owner + operation ID + 模型/计价摘要 · 加密 owner 凭据按需解析 · 被拒变异也记 token/费用 |
 | ✅ 已上线 | 风控引擎落到 HTTP 边界 | D-9 | 声明式 `risk_rules.toml` · 撮合前 `enforce` · `risk_locks` 表（独立 commit） |
 | ✅ 已上线 | Bull / Bear 研究员辩论 | D-9 | `services/research` 立场对抗研究员 |
 | ✅ 已上线 | Scheduler / cron agent 模式 | D-9 | `scheduler_jobs` + advisory lock + `/api/scheduler/*` 管理面 |
@@ -249,7 +253,7 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 | ✅ 已上线 | 横截面因子打分 | D-12 | `factor.panel_score` · `POST /panel/score` · 横截面 Rank IC（每期对全池按因子排序 vs 跨标的前瞻收益）· Alpha101 a1/a3 原生 · 与单标的择时口径正交 |
 | ✅ 已上线 | 时序交叉验证 — 防过拟合 | D-12 | WalkForward / PurgedKFold / Combinatorial Purged CV + Deflated Sharpe · `POST /backtest/cv` · test 段始终含最新 bar · 样本不足自动回落 walk-forward |
 | ✅ 已上线 | 财报 point-in-time | D-12 | Baostock 财报按实际披露日期过滤 · `GET /fundamentals?as_of=` · 防前视（yfinance v1 尚未 PIT，已显式标注） |
-| 🗓️ 已规划 | 策略进化 — E2 | E2 | 多代演化 + MAP-Elites + Island Model + `unified-diff` 变异（E1 单代闭环已在 D-9 上线） |
+| 🗓️ 已规划 | 策略进化 — E2 | E2 | best-parent 多代循环 + early stopping；MAP-Elites / Island Model 延后到真实 run 数据证明需要多样性控制时再做 |
 | 🗓️ 已规划 | 因子发现 — L2 / L3 | L2 / L3 | 多 agent 因子小组（L2）+ 每周自动扫描（L3），建立在已上线的 L1 DSL pipeline 之上 |
 | 🗓️ 已规划 | 因子衰减自动处置 | 待定 | 反思驱动回测 + 衰减因子自动剔除——当前衰减巡检只告警、绝不替你动仓 |
 | 🔬 探索中 | Alpha Zoo 冷启动 | E1+ | 公开 alpha 库播种（Qlib / Kakushadze / GTJA） |
@@ -276,7 +280,7 @@ Inalpha 把*调度*和*算力*分开：agent runtime 负责扇出网格、聚合
 
 ### Docker 自托管（推荐）
 
-这是个人电脑或个人服务器的完整 Docker 启动路径：本地构建 PostgreSQL/TimescaleDB、Redis、迁移、data、paper、research、factor、Mastra 和操作者控制台。
+这是个人电脑或个人服务器的完整 Docker 启动路径：本地构建 PostgreSQL/TimescaleDB、Redis、迁移、data、paper、research、factor、evolver、Mastra 和操作者控制台。
 
 前置条件：Docker Engine（含 Compose v2）、Git 与 OpenSSL。克隆仓库后，初始化仅保留在本机的环境文件，再启动全栈：
 
@@ -293,7 +297,7 @@ bash scripts/selfhost.sh up
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
-在 <http://127.0.0.1:3001> 登录，打开 **LLM Settings**，填写你的 provider、model 与个人 API key。每位已认证用户各自提供 key，控制台用 `LLM_CONFIG_ENCRYPTION_KEY` 加密后写入数据库。不要把 provider API key 填进 `infra/.env.selfhost`：认证生产模式刻意不支持共享系统 key fallback。
+在 <http://127.0.0.1:3001> 登录，打开 **LLM Settings**，填写你的 provider、model 与个人 API key。控制台用 `LLM_CONFIG_ENCRYPTION_KEY` 加密后写入数据库，orchestrator 与 Evolver 按 owner 临时解析。独立 Research service 当前仍读取 `infra/.env.selfhost` 中部署级的 `LLM_PROVIDER` / `LLM_MODEL` 与对应 provider key；需要 deep dive 时须配置该段，并在 per-owner 透传落地前把它视为共享凭据边界。
 
 常用操作：
 
@@ -312,8 +316,10 @@ self-host Compose 故意只暴露 `127.0.0.1:3001`。需要远程访问时，用
 ### 1 · 安装依赖
 
 ```bash
-pnpm i      # Node 包（packages/orchestration）
-uv sync     # Python 包（services/_shared, data, paper, research, factor）
+cd packages/orchestration && pnpm i && cd ../..
+for service in data paper research factor evolver; do
+  (cd "services/$service" && uv sync)
+done
 ```
 
 ### 2 · 配置 LLM Key（必须）
@@ -344,15 +350,26 @@ cp .env.example .env
 
 **可选 · 宏观因子需要 FRED key。** 因子库的宏观因子（`macro.*`——利率、期限/信用利差、CPI、就业、实体经济、情绪）通过 `venue=fred` 读 FRED 数据。在 `.env` 里设 `FRED_API_KEY` 即可启用，[免费、秒发](https://fred.stlouisfed.org/docs/api/api_key.html)。不配 key 时 connector 不注册，宏观因子优雅降级（价量因子不受影响）。注意：宏观因子**仅在 `timeframe=1d/1wk` 计算**——intraday bar 上会被过滤（月频序列会变成阶梯函数），所以要看宏观因子请用 `1d`。
 
-### 3 · 启动全部 service
+### 3 · 启动 PostgreSQL / Redis 并执行迁移
 
 ```bash
-bash scripts/dev.sh             # 一键起 data(8001) + paper(8002) + research(8003) + factor(8004) + mastra(4111)
+cp infra/.env.example infra/.env
+(cd infra && docker compose up -d)
+(cd infra/migrations && uv sync && uv run alembic upgrade head)
+```
+
+`infra/.env.example` 与仓库根 `.env.example` 的本地数据库默认值刻意保持一致。若修改数据库
+密码或端口，启动 service 前必须同步修改两份文件。
+
+### 4 · 启动全部 service
+
+```bash
+bash scripts/dev.sh             # 一键起 data(8001) + paper(8002) + research(8003) + factor(8004) + evolver(8005) + mastra(4111)
 bash scripts/dev.sh logs        # 跟随日志
 bash scripts/dev.sh stop        # 停止全部
 ```
 
-### 4 · 打开操作者控制台 —— 你的主入口
+### 5 · 打开操作者控制台 —— 你的主入口
 
 **操作者控制台**是使用 Inalpha 的推荐方式，也是你的主入口。一块运行时看板把原本要问 agent 才知道的
 状态一眼铺开：组合与持仓、Live Runner 及其逐 bar 决策、跨模块的 agent 活动时间线、策略实验室、
@@ -365,16 +382,18 @@ pnpm i           # 仅首次
 pnpm dev         # → http://localhost:3001
 ```
 
-无需额外配置 —— 控制台直接读仓库根的 `.env`（后端 URL + `JWT_SECRET` 都继承），只要第 3 步的
+无需额外配置 —— 控制台直接读仓库根的 `.env`（后端 URL + `JWT_SECRET` 都继承），只要第 4 步的
 service 起着，它就能连上。内置**黑白双主题**（终端「印章 / Vermilion」美学，详见
 [`apps/dashboard/design.md`](apps/dashboard/design.md)）与侧栏 `en / 中` 切换。
 
 > 控制台就是统一入口：数据、研究、回测、Live Runner，以及与 orchestrator 的对话，现在都在同一个地方。
 
-> 只有 orchestrator（Mastra）和 `services/research` 会消耗你的 LLM key；`services/paper` 不直接调 LLM。
-> 想用 3 个独立 terminal 手动起，或看底层 live trace（`mastra dev` playground <http://127.0.0.1:4111>）？见 [`AGENTS.md §4`](AGENTS.md)。
+> orchestrator 与经显式审批的 `services/evolver` run 会消耗 owner 自己的 LLM key；
+> `services/research` 当前使用部署级 provider/key，`services/paper` 从不直接调用 LLM。Evolver
+> 只在执行时临时解析加密凭据，run 内只存冻结的非敏感配置/计价快照。想用多个独立 terminal 手动起，或看底层 live trace（`mastra dev`
+> playground <http://127.0.0.1:4111>）？见 [`AGENTS.md §4`](AGENTS.md)。
 
-### 5 · 试着问几句
+### 6 · 试着问几句
 
 控制台起好后，在右下角内嵌对话栏直接和 orchestrator 聊——它会用**你提问的语言**回复。下面每条各展示系统的一项能力：
 
@@ -384,6 +403,7 @@ service 起着，它就能连上。内置**黑白双主题**（终端「印章 /
 - `用 A股系统化调研方法论评估寒武纪（sh.688256）：壁垒 → 增速 → 估值消化 → 资金 → 风险逐层验证。` —— **研究方法论 skill**（cn-equity-research）：按需加载外部投研框架。
 - `顺着 AI 算力这个热点，用供应链瓶颈方法拆产业链，筛出值得优先研究的 A股环节。` —— **研究方法论 skill**（serenity）：从叙事拆到稀缺环节。
 - `给招商银行（sh.600036）设计一个均值回归策略，回测最近一年，给出 fitness 与买入持有对比。` —— **LLM 自创策略**：模型写完整源码，过三道沙盒，再自动并跑基线。
+- `把我已晋级的 BTC 策略演化 1 个候选，这次跑完就停。` —— **E1 演化**：先展示冻结模型与费用预估供审批，再让 seed/baseline/candidate 共用一个 dataset hash 评估，晋级仍是独立人工决策。
 - `用动量 / 均值回归 / 突破在寒武纪、宁德时代、招商银行上回测最近一年，给我帕累托前沿。` —— **Swarm**：几十个回测并行扇出。
 - `给寒武纪（sh.688256）开一个小仓位。` —— **机器审批下单**：看它走 提议 → 审批 → 执行；LLM 没有直接下单路径。
 

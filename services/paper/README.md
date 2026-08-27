@@ -1,47 +1,48 @@
-# services/paper
+# Inalpha Paper · 回测、模拟盘与交易护栏
 
-回测 / 模拟盘 / 实盘三合一引擎。
+`services/paper` 是事件驱动量化内核（`:8002`）。回测与 live runner 共用 Strategy / Clock /
+MessageBus / execution 模型；账户、订单、持仓、交易计划、候选、回测与运行记录统一写入
+PostgreSQL。当前只做模拟执行，不连接真钱经纪商。
 
-## D-4 范围（本轮）：纯内存内核
+## 当前能力
 
-本轮**只**有内核抽象，**没有** Gateway / Engine / HTTP / 数据库接入。可单元测试，
-无外部依赖。
+- **回测与稳健性**：单次回测、buy-and-hold baseline、时序 CV、参数邻域敏感性、多市场
+  annualization、交易与 fitness 明细持久化。
+- **策略生命周期**：内置策略、research hint compose、LLM authored strategy 三道沙盒、
+  candidate leaderboard 与显式 promote。
+- **Live runner**：只有 promoted 且 owner 匹配的候选可启动；按新 bar 自动运行，保存逐 bar
+  决策，支持运行 TTL、单账户上限、错误分类与退避。
+- **Plan/Exec 下单护栏**：`/plans` create / approve / execute，审批 token 一次性且短 TTL；
+  `/orders/submit` 仍经过机器 RiskGuard，LLM 没有可绕过 plan 的直下单 tool。
+- **多市场账户与风控**：跨币种 cash / FX、spot/perp 约束、交易时段日历、cooldown、
+  low-profit、max-drawdown、stop-loss 与 risk lock 审计。
 
-```
-src/inalpha_paper/
-├── kernel/
-│   ├── clock.py         Clock (ABC) + LiveClock + TestClock
-│   ├── msgbus.py        MessageBus (pub/sub + endpoint，wildcard 匹配)
-│   └── identifiers.py   InstrumentId / ClientOrderId / VenueOrderId / StrategyId
-├── model/
-│   ├── data.py          QuoteTick / TradeTick / Bar （含 data_epoch，ADR-0013）
-│   ├── orders.py        Order + 7 状态机 (NEW → ... → FILLED/CANCELED/REJECTED)
-│   ├── positions.py     Position （含 generation，ADR-0013 CAS）
-│   ├── events.py        OrderEvent / PositionEvent 不可变事件
-│   └── commands.py      SubmitOrderCommand / CancelOrderCommand
-└── strategy/
-    ├── actor.py         数据订阅 + 生命周期回调
-    └── base.py          Strategy (extends Actor) 加下单接口
-```
+## 代表性 API
 
-## 设计来源
+| 路径 | 用途 |
+|---|---|
+| `POST /backtest` · `/backtest/cv` · `/backtest/sensitivity` | 回测与稳健性评估 |
+| `POST /strategy_candidates` · `GET /strategy_candidates/*` | 创作、查询与审计候选 |
+| `POST /strategy_runs` · `/strategy_runs/{id}/stop` | 启停 live runner |
+| `GET /strategy_runs/{id}/decisions` | 回放逐 bar 决策 |
+| `POST /plans` · `/plans/{id}/approve` · `/plans/{id}/execute` | 交易计划与一次性审批 |
+| `GET /accounts/me` · `/positions` · `/orders` | 账户、持仓与订单 |
+| `GET /risk/rules` · `/risk/locks` | 风控配置与锁记录 |
 
-- **借鉴 Nautilus**：Clock 抽象 + MessageBus pub/sub + endpoint 双形态 +
-  `ts_event` / `ts_init` 双时间戳（见 [refs/nautilus.md §3 §4 §5](../../docs/refs/nautilus.md)）
-- **借鉴 vnpy**：Gateway 抽象（后续 D-5 起）+ 全局拼接 ID 约定
-- **ADR-0013 落地**：`QuoteTick`/`Bar` 带 `data_epoch`，`Position` 带 `generation`
+除 `/health` 与登录入口外，领域 API 都按认证 owner 隔离。核心实现分布在 `engine/`、
+`execution/`、`strategy_authoring/`、`storage/` 与 `api/`。
 
-## 后续 D-5 / D-6
+## 本地开发
 
-- **D-5**：Gateway 抽象 + SimulatedExchange + Engine (Backtest/Live) + FastAPI 入口
-- **D-6**：第一个 SMA cross 策略 + 端到端：data → backtest → fill → position
-
-## 开发
+先按根 README 启动开发数据库并把 migration 升到 head，然后：
 
 ```bash
 cd services/paper
 uv sync --group dev
-uv run pytest         # 应全部通过（纯内存，不需要 DB）
-uv run ruff check src tests
-uv run mypy src
+uv run uvicorn inalpha_paper.main:app --reload --port 8002
+
+uv run ruff check .
+uv run pytest
 ```
+
+完整交易信任边界与当前阶段见 [`docs/04-current-state.md`](../../docs/04-current-state.md)。

@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "Inalpha 操作者控制台 / operator console — 只读运行时看板(账户/持仓/Live Runner/Agent 活动)",
+  "description": "Inalpha 认证操作者控制台 / operator console — Agent 对话、组合、回测、演化与运行时治理",
   "type": "module",
   "packageManager": "pnpm@11.1.2",
   "engines": {

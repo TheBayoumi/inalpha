@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Inalpha · Operator Console",
-    "description": "Read-only runtime dashboard for Inalpha paper trading."
+    "description": "Authenticated Inalpha operator console for chat, paper trading, backtests, evolution, and runtime governance."
   },
   "nav": {
     "console": "Operator Console",
