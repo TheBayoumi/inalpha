@@ -1,8 +1,14 @@
 /** Evolver Mastra tools 的共享 schema 与客户端解析。 */
 import { z } from "zod";
 
-import { mintServiceToken, resolveRequestToken } from "../auth.js";
-import { EvolverClient } from "../clients/evolver.js";
+import { resolveRequestToken } from "../auth.js";
+import {
+  buildEvolutionStartRequest,
+  evolutionRequestDigest,
+  EvolverClient,
+  type EvolutionConfig,
+  type EvolutionStartRequest,
+} from "../clients/evolver.js";
 import { getSettings } from "../config.js";
 import { AUTH_SUB_KEY } from "../hooks/with-hooks.js";
 import {
@@ -24,13 +30,14 @@ export async function getEvolverClient(ctx?: ToolRequestContext): Promise<Evolve
 }
 
 export async function getApprovedEvolutionRunContext(
+  input: { budget?: number; seedStrategyId?: string; config: EvolutionConfig },
   ctx?: ToolRequestContext,
 ): Promise<{
   client: EvolverClient;
   operationId: string;
-  approvalToken: string;
   credentialGrant: string;
   llmSnapshot: EvolutionLLMSnapshot;
+  request: EvolutionStartRequest;
 }> {
   const operationId = getRequestContextValue<string>(
     { requestContext: ctx },
@@ -44,26 +51,19 @@ export async function getApprovedEvolutionRunContext(
   if (!operationId || !llmSnapshot || typeof authSub !== "string" || !authSub) {
     throw new Error("explicit evolution approval context is missing");
   }
-  const approvalToken = await mintServiceToken(
-    {
-      sub: authSub,
-      token_use: "evolution_approval",
-      operation_id: operationId,
-      llm_config_digest: llmSnapshot.config_digest,
-    },
-    300,
-  );
+  const request = buildEvolutionStartRequest({ ...input, llmSnapshot });
   const credentialGrant = await mintEvolutionCredentialGrant({
     authSub,
     operationId,
+    requestDigest: evolutionRequestDigest(request),
     snapshot: llmSnapshot,
   });
   return {
     client: await getEvolverClient(ctx),
     operationId,
-    approvalToken,
     credentialGrant,
     llmSnapshot,
+    request,
   };
 }
 

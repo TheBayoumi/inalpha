@@ -42,6 +42,8 @@ export async function GET(
       payload.operation_id.length < 8 ||
       typeof payload.llm_config_digest !== "string" ||
       !/^[0-9a-f]{64}$/.test(payload.llm_config_digest) ||
+      typeof payload.request_digest !== "string" ||
+      !/^[0-9a-f]{64}$/.test(payload.request_digest) ||
       typeof payload.jti !== "string" ||
       !payload.jti ||
       typeof payload.sub !== "string" ||
@@ -68,8 +70,8 @@ export async function GET(
     try {
       recorded = await getPool().query(
         `INSERT INTO evolution_credential_grant_uses
-         (jti,owner_sub,config_id,operation_id,config_digest,consumed_at)
-         VALUES ($1,$2,$3,$4,$5,NOW())
+         (jti,owner_sub,config_id,operation_id,config_digest,request_digest,consumed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,NOW())
          ON CONFLICT (jti) DO UPDATE SET
            redemption_count=evolution_credential_grant_uses.redemption_count+1,
            last_redeemed_at=NOW()
@@ -77,6 +79,7 @@ export async function GET(
            AND evolution_credential_grant_uses.config_id=EXCLUDED.config_id
            AND evolution_credential_grant_uses.operation_id=EXCLUDED.operation_id
            AND evolution_credential_grant_uses.config_digest=EXCLUDED.config_digest
+           AND evolution_credential_grant_uses.request_digest=EXCLUDED.request_digest
            AND evolution_credential_grant_uses.redemption_count<2
            AND evolution_credential_grant_uses.consumed_at>=NOW()-INTERVAL '2 minutes'
          RETURNING jti`,
@@ -86,6 +89,7 @@ export async function GET(
           configId,
           payload.operation_id,
           payload.llm_config_digest,
+          payload.request_digest,
         ],
       );
     } catch {

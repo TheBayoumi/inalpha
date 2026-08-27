@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from inalpha_evolver.api.presenters import candidate_response, run_response
-from inalpha_evolver.api.request_hash import normalized_request
+from inalpha_evolver.api.request_hash import approval_request_digest, normalized_request
 from inalpha_evolver.api.schemas import (
     EvolutionConfig,
     EvolutionLLMSnapshot,
@@ -43,6 +43,13 @@ def test_request_hash_is_stable_and_payload_sensitive() -> None:
     assert config_a == config_b
     assert hash_a == hash_b
     assert hash_a != hash_c
+
+
+def test_approval_request_digest_matches_typescript_contract() -> None:
+    assert (
+        approval_request_digest(_request())
+        == "c3084e0f6daee93abc87dd3dc5804295e70649f33fcd2b3613cf6de71e876d88"
+    )
 
 
 @pytest.mark.parametrize(

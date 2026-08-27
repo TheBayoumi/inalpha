@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import time
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 VALID_LLM_SNAPSHOT = {
     "config_id": "config-1",
@@ -24,6 +27,13 @@ VALID_LLM_SNAPSHOT = {
     "config_digest": "a4635b0c80f69b6054bdc2330b78cb98d9c81c849d476e7d01f1b8d626015c2c",
 }
 
+EVOLUTION_GRANT_PRIVATE_KEY = Ed25519PrivateKey.generate()
+EVOLUTION_GRANT_PUBLIC_KEY_B64 = base64.b64encode(
+    EVOLUTION_GRANT_PRIVATE_KEY.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    )
+).decode()
+
 
 def llm_snapshot() -> dict:
     """返回可安全修改的有效快照副本。"""
@@ -34,20 +44,25 @@ def approval_token(
     *,
     subject: str,
     operation_id: str,
-    secret: str,
+    request_digest: str,
     digest: str = VALID_LLM_SNAPSHOT["config_digest"],
 ) -> str:
-    """签发与 orchestration 相同 scope 的短效审批断言。"""
+    """签发与 orchestration 相同 scope 的 Ed25519 grant。"""
     now = int(time.time())
     return jwt.encode(
         {
             "sub": subject,
-            "token_use": "evolution_approval",
+            "token_use": "evolution_credential",
+            "aud": ["inalpha-evolver", "inalpha-dashboard-credential"],
+            "jti": "11111111-1111-4111-8111-111111111111",
             "operation_id": operation_id,
+            "config_id": VALID_LLM_SNAPSHOT["config_id"],
+            "provider": VALID_LLM_SNAPSHOT["provider"],
             "llm_config_digest": digest,
+            "request_digest": request_digest,
             "iat": now,
-            "exp": now + 300,
+            "exp": now + 30 * 60 * 60,
         },
-        secret,
-        algorithm="HS256",
+        EVOLUTION_GRANT_PRIVATE_KEY,
+        algorithm="EdDSA",
     )

@@ -42,7 +42,11 @@ export default async function middleware(req: NextRequest): Promise<Response> {
   const { pathname } = req.nextUrl;
   const isApi = pathname.startsWith("/api");
   // 公开:登录页 + 登录/登出/会话 API(否则登录前无从进入)。
-  const isPublic = pathname === "/login" || pathname.startsWith("/api/auth/");
+  // Evolver 凭据兑换只接受路由内自行验签的 Ed25519 Bearer grant，不依赖浏览器 cookie。
+  const isCredentialExchange =
+    req.method === "GET" && /^\/api\/internal\/llm-config\/[^/]+$/.test(pathname);
+  const isPublic =
+    pathname === "/login" || pathname.startsWith("/api/auth/") || isCredentialExchange;
 
   if (AUTH_ENABLED && !isPublic && !(await hasValidSession(req))) {
     if (isApi) {

@@ -3,8 +3,11 @@ import { generateKeyPairSync } from "node:crypto";
 import { jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { verifyToken } from "../src/auth.js";
-import { EvolverClient } from "../src/clients/evolver.js";
+import {
+  buildEvolutionStartRequest,
+  evolutionRequestDigest,
+  EvolverClient,
+} from "../src/clients/evolver.js";
 import { AUTH_SUB_KEY } from "../src/hooks/with-hooks.js";
 import {
   APPROVAL_OPERATION_ID_KEY,
@@ -32,9 +35,10 @@ function response(status: number): Response {
 }
 
 function options() {
-  return {
+  const request = buildEvolutionStartRequest({
     budget: 1,
     seedStrategyId: "sma_cross_v1",
+    llmSnapshot: snapshot,
     config: {
       venue: "binance",
       symbol: "BTCUSDT",
@@ -43,10 +47,11 @@ function options() {
       as_of: "2026-08-02T00:00:00Z",
       initial_cash: 10_000,
     },
+  });
+  return {
+    request,
     idempotencyKey: "approval-operation-1",
-    approvalToken: "approval-token",
     credentialGrant: "credential-grant",
-    llmSnapshot: snapshot,
   };
 }
 
@@ -56,7 +61,7 @@ afterEach(() => {
 });
 
 describe("EvolverClient", () => {
-  it("mints a short-lived approval JWT bound to owner, operation, and snapshot", async () => {
+  it("mints one Ed25519 grant bound to owner, operation, snapshot, and request", async () => {
     const keys = generateKeyPairSync("ed25519");
     vi.stubEnv(
       "EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64",
@@ -68,27 +73,25 @@ describe("EvolverClient", () => {
       [USER_LLM_SNAPSHOT_KEY, snapshot],
     ]);
 
-    const approved = await getApprovedEvolutionRunContext(requestContext);
-    const payload = await verifyToken(approved.approvalToken);
+    const input = {
+      budget: 1,
+      seedStrategyId: "sma_cross_v1",
+      config: options().request.config,
+    };
+    const approved = await getApprovedEvolutionRunContext(input, requestContext);
     const { payload: credential } = await jwtVerify(
       approved.credentialGrant,
       keys.publicKey,
       { algorithms: ["EdDSA"], audience: "inalpha-dashboard-credential" },
     );
 
-    expect(payload).toMatchObject({
-      sub: "user:alice",
-      token_use: "evolution_approval",
-      operation_id: "approval-operation-1",
-      llm_config_digest: snapshot.config_digest,
-    });
-    expect(Number(payload.exp) - Number(payload.iat)).toBe(300);
     expect(credential).toMatchObject({
       sub: "user:alice",
       token_use: "evolution_credential",
       config_id: "config-1",
       operation_id: "approval-operation-1",
       llm_config_digest: snapshot.config_digest,
+      request_digest: evolutionRequestDigest(approved.request),
     });
     expect(Number(credential.exp) - Number(credential.iat)).toBe(108_000);
   });
@@ -112,14 +115,36 @@ describe("EvolverClient", () => {
       expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
         "approval-operation-1",
       );
-      expect((init.headers as Record<string, string>)["X-Evolution-Approval"]).toBe(
-        "approval-token",
-      );
+      expect((init.headers as Record<string, string>)["X-Evolution-Approval"]).toBeUndefined();
       expect((init.headers as Record<string, string>)["X-Evolution-Credential"]).toBe(
         "credential-grant",
       );
       expect(init.body).not.toContain("not-forwarded");
     }
+  });
+
+  it("normalizes defaults and timezone offsets before computing the request digest", () => {
+    const request = buildEvolutionStartRequest({
+      config: {
+        venue: "binance",
+        symbol: "BTCUSDT",
+        timeframe: "1h",
+        from_ts: "2026-08-01T08:00:00+08:00",
+        as_of: "2026-08-02T08:00:00+08:00",
+      },
+      llmSnapshot: snapshot,
+    });
+
+    expect(request.config).toMatchObject({
+      from_ts: "2026-08-01T00:00:00.000Z",
+      as_of: "2026-08-02T00:00:00.000Z",
+      initial_cash: 10_000,
+      fee_rate: 0.001,
+      validation_split: 0.3,
+    });
+    expect(evolutionRequestDigest(request)).toBe(
+      "0dd54caf902703e4303f252066bd9ad3ec1525c67cdab5bf1353befaefb48a2e",
+    );
   });
 
   it("retries a 502 once but does not retry other client errors", async () => {

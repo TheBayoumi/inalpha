@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.13.0",
     "pydantic-settings>=2.14.0",
     "psycopg[binary,pool]>=3.3.0",
+    "cryptography>=46.0.0",
     "openai>=2.38.0",
     "unidiff>=0.7.0",
 ]
