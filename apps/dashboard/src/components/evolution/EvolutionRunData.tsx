@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import type { EvolutionRun } from "@/lib/types";
 import { Panel } from "@/components/ui/Panel";
 
-/** 展示 seed、基准、冻结数据 manifest 与失败信息。 */
+/** 展示 seed、冻结 LLM/数据快照、基准与失败信息。 */
 export function EvolutionRunData({ run }: { run: EvolutionRun }) {
   const t = useTranslations("evolution.detail");
   return (
@@ -25,6 +25,13 @@ export function EvolutionRunData({ run }: { run: EvolutionRun }) {
           </p>
         )}
       </Panel>
+      <Panel title={t("llmSnapshot")}>
+        <ObjectRows
+          value={llmSnapshotRows(run)}
+          empty={t("notAvailable")}
+          preferred={["provider", "model", "config_id", "pricing_version", "estimated_max_usd_per_candidate", "config_digest"]}
+        />
+      </Panel>
       <Panel title={t("dataset")}>
         <ObjectRows
           value={run.dataset_manifest}
@@ -40,6 +47,19 @@ export function EvolutionRunData({ run }: { run: EvolutionRun }) {
       </Panel>
     </div>
   );
+}
+
+function llmSnapshotRows(run: EvolutionRun): Record<string, unknown> | null {
+  const snapshot = run.llm_snapshot;
+  if (!snapshot) return null;
+  return {
+    provider: snapshot.provider,
+    model: snapshot.model,
+    config_id: snapshot.config_id,
+    pricing_version: snapshot.pricing.version,
+    estimated_max_usd_per_candidate: snapshot.pricing.estimated_max_usd_per_candidate,
+    config_digest: run.llm_config_digest ?? snapshot.config_digest,
+  };
 }
 
 function Item({ label, value }: { label: string; value: string }) {

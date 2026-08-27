@@ -580,6 +580,7 @@
       "cost": "Cost",
       "failure": "Failure code",
       "dataset": "Frozen dataset",
+      "llmSnapshot": "Frozen LLM & pricing",
       "seedReport": "Seed report",
       "baseline": "Market baseline",
       "notAvailable": "Not available yet",
