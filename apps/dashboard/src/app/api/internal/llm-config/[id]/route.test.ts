@@ -32,6 +32,7 @@ async function token(
     provider: "deepseek",
     operation_id: "operation-1",
     llm_config_digest: "a".repeat(64),
+    request_digest: "b".repeat(64),
     ...overrides,
   })
     .setProtectedHeader({ alg: "EdDSA" })
@@ -76,6 +77,7 @@ describe("internal owner LLM credential route", () => {
     const now = Math.floor(Date.now() / 1_000);
     const requests = [
       callRoute(`Bearer ${await token({ token_use: "session" })}`),
+      callRoute(`Bearer ${await token({ request_digest: "missing-scope" })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: null })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: now - 108_100, expiresAt: now + 1 })}`),
       callRoute(`Bearer ${await token({}, { issuedAt: now + 60, expiresAt: now + 120 })}`),
@@ -84,6 +86,7 @@ describe("internal owner LLM credential route", () => {
     ];
 
     expect((await Promise.all(requests)).map((response) => response.status)).toEqual([
+      403,
       403,
       401,
       403,

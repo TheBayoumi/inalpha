@@ -1,4 +1,6 @@
 /** services/evolver 的 owner-scoped API 客户端。 */
+import { createHash } from "node:crypto";
+
 import { HttpClient, HttpClientError } from "./http.js";
 import type { EvolutionLLMSnapshot } from "../mastra/llm/evolution-snapshot.js";
 
@@ -12,6 +14,66 @@ export type EvolutionConfig = {
   fee_rate?: number;
   validation_split?: number;
 };
+
+export type EvolutionStartRequest = {
+  budget: number;
+  seed_strategy_id: string;
+  config: Required<EvolutionConfig>;
+  llm: EvolutionLLMSnapshot;
+};
+
+/** 将 tool 输入收口为签名与发送共用的唯一请求体。 */
+export function buildEvolutionStartRequest(options: {
+  budget?: number;
+  seedStrategyId?: string;
+  config: EvolutionConfig;
+  llmSnapshot: EvolutionLLMSnapshot;
+}): EvolutionStartRequest {
+  return {
+    budget: options.budget ?? 4,
+    seed_strategy_id: options.seedStrategyId ?? "sma_cross_v1",
+    config: {
+      ...options.config,
+      from_ts: new Date(options.config.from_ts).toISOString(),
+      as_of: new Date(options.config.as_of).toISOString(),
+      initial_cash: options.config.initial_cash ?? 10_000,
+      fee_rate: options.config.fee_rate ?? 0.001,
+      validation_split: options.config.validation_split ?? 0.3,
+    },
+    llm: options.llmSnapshot,
+  };
+}
+
+/** 生成与 Python 端一致的审批请求摘要，覆盖所有会影响成本或结果的字段。 */
+export function evolutionRequestDigest(request: EvolutionStartRequest): string {
+  const config = request.config;
+  const canonical = [
+    request.seed_strategy_id,
+    numberText(request.budget),
+    config.venue,
+    config.symbol,
+    config.timeframe,
+    numberText(Date.parse(config.from_ts)),
+    numberText(Date.parse(config.as_of)),
+    float64Hex(config.initial_cash),
+    float64Hex(config.fee_rate),
+    float64Hex(config.validation_split),
+    request.llm.config_digest,
+  ];
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+function numberText(value: number): string {
+  if (!Number.isFinite(value)) throw new Error("evolution request contains a non-finite number");
+  return String(value);
+}
+
+function float64Hex(value: number): string {
+  if (!Number.isFinite(value)) throw new Error("evolution request contains a non-finite number");
+  const buffer = Buffer.allocUnsafe(8);
+  buffer.writeDoubleBE(value);
+  return buffer.toString("hex");
+}
 
 export type CandidateResult = {
   candidate_id: string;
@@ -41,6 +103,8 @@ export type RunStatusResult = {
   seed_strategy_id: string;
   budget: number;
   config: Record<string, unknown>;
+  llm_snapshot: EvolutionLLMSnapshot | null;
+  llm_config_digest: string | null;
   status: "queued" | "running" | "cancelling" | "completed" | "failed" | "aborted";
   active_stage: string | null;
   llm_cost_usd: number;
@@ -68,30 +132,19 @@ export class EvolverClient {
   }
 
   async startRun(options: {
-    budget?: number;
-    seedStrategyId?: string;
-    config: EvolutionConfig;
+    request: EvolutionStartRequest;
     idempotencyKey: string;
-    approvalToken: string;
     credentialGrant: string;
-    llmSnapshot: EvolutionLLMSnapshot;
   }): Promise<RunStatusResult> {
-    const body = {
-      budget: options.budget ?? 4,
-      seed_strategy_id: options.seedStrategyId ?? "sma_cross_v1",
-      config: options.config,
-      llm: options.llmSnapshot,
-    };
     const headers = {
       "Idempotency-Key": options.idempotencyKey,
-      "X-Evolution-Approval": options.approvalToken,
       "X-Evolution-Credential": options.credentialGrant,
     };
     try {
-      return await this.http.post<RunStatusResult>("/api/v1/runs", body, headers);
+      return await this.http.post<RunStatusResult>("/api/v1/runs", options.request, headers);
     } catch (error) {
       if (!(error instanceof HttpClientError) || ![502, 504].includes(error.status)) throw error;
-      return await this.http.post<RunStatusResult>("/api/v1/runs", body, headers);
+      return await this.http.post<RunStatusResult>("/api/v1/runs", options.request, headers);
     }
   }
 

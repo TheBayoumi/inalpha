@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { insertPending, markResolved } from "./repo.js";
+import {
+  findEvolutionOperation,
+  insertPending,
+  markResolved,
+  rememberEvolutionOperation,
+} from "./repo.js";
 
 export type PendingDecision = "allow" | "deny";
 
@@ -39,11 +44,12 @@ interface PendingApprovalRecord extends PendingApprovalView {
 
 interface ConsumedApprovalRecord {
   operationId: string;
-  deadline: string;
+  expiresAt: string;
   timer: ReturnType<typeof setTimeout>;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const EVOLUTION_OPERATION_RETENTION_MS = 24 * 60 * 60 * 1_000;
 
 export type PendingTelemetrySink = (record: Record<string, unknown>) => void;
 
@@ -58,6 +64,20 @@ export interface ApprovalPersistence {
     decision: PendingDecision,
     via: "user" | "timeout",
   ): Promise<void>;
+  rememberEvolutionOperation(args: EvolutionOperationScope & { operationId: string }): Promise<{
+    expiresAt: string;
+  } | undefined>;
+  findEvolutionOperation(args: EvolutionOperationScope): Promise<{
+    operationId: string;
+    expiresAt: string;
+  } | undefined>;
+}
+
+export interface EvolutionOperationScope {
+  authSub: string;
+  sessionId: string;
+  toolName: string;
+  inputDigest: string;
 }
 
 /** Produces a deterministic SHA-256 digest for an approval-defining input. */
@@ -147,12 +167,12 @@ export class PendingApprovalsStore {
     return true;
   }
 
-  /** Atomically consumes one approved decision and returns its stable operation ID. */
-  consumeApproved(args: PendingConsumeArgs): string | undefined {
+  /** Atomically consumes one approved decision and returns its restart-stable operation ID. */
+  async consumeApproved(args: PendingConsumeArgs): Promise<string | undefined> {
     const identity = this.identityFor(args);
     const consumed = args.reuseAfterConsume ? this.consumedByIdentity.get(identity) : undefined;
     if (consumed) {
-      if (Date.now() >= Date.parse(consumed.deadline)) {
+      if (Date.now() >= Date.parse(consumed.expiresAt)) {
         this.removeConsumed(identity);
       } else {
         this.telemetry({
@@ -166,6 +186,22 @@ export class PendingApprovalsStore {
         return consumed.operationId;
       }
     }
+    const scope = this.operationScope(args);
+    if (args.reuseAfterConsume && this.persistence) {
+      const persisted = await this.persistence.findEvolutionOperation(scope);
+      if (persisted && Date.now() < Date.parse(persisted.expiresAt)) {
+        this.cacheConsumed(identity, persisted);
+        this.telemetry({
+          event: "ask_approval_operation_recovered",
+          requestId: persisted.operationId,
+          toolName: args.toolName,
+          sessionId: args.sessionId,
+          authSub: args.authSub,
+          ts: new Date().toISOString(),
+        });
+        return persisted.operationId;
+      }
+    }
     const requestId = this.identityIndex.get(identity);
     const record = requestId ? this.records.get(requestId) : undefined;
     if (!record || record.status !== "approved") return undefined;
@@ -173,17 +209,35 @@ export class PendingApprovalsStore {
       this.expire(record.requestId);
       return undefined;
     }
-    this.remove(record);
+    let reusable: { operationId: string; expiresAt: string } | undefined;
     if (args.reuseAfterConsume) {
-      this.consumedByIdentity.set(identity, {
+      const fallback = {
         operationId: record.requestId,
-        deadline: record.deadline,
-        timer: setTimeout(
-          () => this.removeConsumed(identity),
-          Math.max(Date.parse(record.deadline) - Date.now(), 0),
-        ),
-      });
+        expiresAt: new Date(Date.now() + EVOLUTION_OPERATION_RETENTION_MS).toISOString(),
+      };
+      try {
+        const persisted = await this.persistence?.rememberEvolutionOperation({
+          ...scope,
+          operationId: record.requestId,
+        });
+        reusable = persisted
+          ? { operationId: record.requestId, expiresAt: persisted.expiresAt }
+          : fallback;
+      } catch (error) {
+        this.telemetry({
+          event: "ask_approval_operation_persist_failed",
+          requestId: record.requestId,
+          toolName: record.toolName,
+          sessionId: record.sessionId,
+          authSub: record.authSub,
+          error: error instanceof Error ? error.message : String(error),
+          ts: new Date().toISOString(),
+        });
+        return undefined;
+      }
     }
+    this.remove(record);
+    if (reusable) this.cacheConsumed(identity, reusable);
     this.telemetry({
       event: "ask_approval_consumed",
       requestId: record.requestId,
@@ -247,6 +301,27 @@ export class PendingApprovalsStore {
     this.consumedByIdentity.delete(identity);
   }
 
+  private cacheConsumed(
+    identity: string,
+    record: { operationId: string; expiresAt: string },
+  ): void {
+    const timer = setTimeout(
+      () => this.removeConsumed(identity),
+      Math.max(Date.parse(record.expiresAt) - Date.now(), 0),
+    );
+    timer.unref?.();
+    this.consumedByIdentity.set(identity, { ...record, timer });
+  }
+
+  private operationScope(args: PendingConsumeArgs): EvolutionOperationScope {
+    return {
+      authSub: args.authSub,
+      sessionId: args.sessionId,
+      toolName: args.toolName,
+      inputDigest: approvalInputDigest(args.approvalInput),
+    };
+  }
+
   private identityFor(args: PendingConsumeArgs): string {
     return this.identityKey(
       args.authSub,
@@ -296,4 +371,6 @@ function stableStringify(value: unknown): string {
 export const pendingApprovals = new PendingApprovalsStore(undefined, {
   insertPending,
   markResolved,
+  rememberEvolutionOperation,
+  findEvolutionOperation,
 });

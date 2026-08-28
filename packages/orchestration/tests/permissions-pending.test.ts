@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 describe("PendingApprovalsStore", () => {
-  it("binds approval to owner, thread, tool and deterministic input digest", () => {
+  it("binds approval to owner, thread, tool and deterministic input digest", async () => {
     const store = new PendingApprovalsStore(() => {});
     const view = request(store);
     expect(view.inputDigest).toBe(approvalInputDigest({ candidateId: "c-42" }));
@@ -55,7 +55,7 @@ describe("PendingApprovalsStore", () => {
     expect(store.respond(view.requestId, "allow", "user:bob")).toBe(false);
     expect(store.respond(view.requestId, "allow", "user:alice")).toBe(true);
     expect(
-      store.consumeApproved({
+      await store.consumeApproved({
         authSub: "user:alice",
         sessionId: "thread-B",
         toolName: "paper.promote_candidate",
@@ -63,7 +63,7 @@ describe("PendingApprovalsStore", () => {
       }),
     ).toBeUndefined();
     expect(
-      store.consumeApproved({
+      await store.consumeApproved({
         authSub: "user:alice",
         sessionId: "thread-A",
         toolName: "paper.promote_candidate",
@@ -71,7 +71,7 @@ describe("PendingApprovalsStore", () => {
       }),
     ).toBe(view.requestId);
     expect(
-      store.consumeApproved({
+      await store.consumeApproved({
         authSub: "user:alice",
         sessionId: "thread-A",
         toolName: "paper.promote_candidate",
@@ -105,7 +105,7 @@ describe("PendingApprovalsStore", () => {
     store.clearAll();
   });
 
-  it("reuses one evolution operation ID for a same-scope transport retry", () => {
+  it("reuses one evolution operation ID for a same-scope transport retry", async () => {
     const store = new PendingApprovalsStore(() => {});
     const args = {
       authSub: "user:alice",
@@ -125,10 +125,10 @@ describe("PendingApprovalsStore", () => {
       approvalInput: args.approvalInput,
       reuseAfterConsume: true,
     };
-    expect(store.consumeApproved(consume)).toBe(view.requestId);
-    expect(store.consumeApproved(consume)).toBe(view.requestId);
+    expect(await store.consumeApproved(consume)).toBe(view.requestId);
+    expect(await store.consumeApproved(consume)).toBe(view.requestId);
     expect(
-      store.consumeApproved({
+      await store.consumeApproved({
         ...consume,
         approvalInput: { request: { budget: 2 }, llm_snapshot: { config_digest: "digest" } },
       }),
@@ -136,7 +136,7 @@ describe("PendingApprovalsStore", () => {
     store.clearAll();
   });
 
-  it("does not reuse a consumed evolution operation after its deadline", () => {
+  it("does not reuse a consumed evolution operation after its retention deadline", async () => {
     vi.useFakeTimers();
     const store = new PendingApprovalsStore(() => {});
     const args = {
@@ -156,12 +156,52 @@ describe("PendingApprovalsStore", () => {
       approvalInput: args.approvalInput,
       reuseAfterConsume: true,
     };
-    expect(store.consumeApproved(consume)).toBe(view.requestId);
+    expect(await store.consumeApproved(consume)).toBe(view.requestId);
 
-    vi.advanceTimersByTime(51);
+    vi.advanceTimersByTime(24 * 60 * 60 * 1_000 + 1);
 
-    expect(store.consumeApproved(consume)).toBeUndefined();
+    expect(await store.consumeApproved(consume)).toBeUndefined();
     store.clearAll();
+  });
+
+  it("recovers a durable evolution operation in a fresh store", async () => {
+    const operations = new Map<string, { operationId: string; expiresAt: string }>();
+    const persistence = {
+      insertPending: vi.fn(async () => {}),
+      markResolved: vi.fn(async () => {}),
+      rememberEvolutionOperation: vi.fn(async (scope: { inputDigest: string; operationId: string }) => {
+        const value = {
+          operationId: scope.operationId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        };
+        operations.set(scope.inputDigest, value);
+        return { expiresAt: value.expiresAt };
+      }),
+      findEvolutionOperation: vi.fn(async (scope: { inputDigest: string }) =>
+        operations.get(scope.inputDigest),
+      ),
+    };
+    const args = {
+      authSub: "user:alice",
+      sessionId: "thread-A",
+      toolName: "evolver.run_evolution",
+      toolInput: { budget: 1 },
+      approvalInput: { request: { budget: 1 }, llm_snapshot: { config_digest: "digest" } },
+      timeoutMs: 5_000,
+    };
+    const first = new PendingApprovalsStore(() => {}, persistence);
+    const view = first.request(args);
+    expect(first.respond(view.requestId, "allow", args.authSub)).toBe(true);
+    expect(
+      await first.consumeApproved({ ...args, reuseAfterConsume: true }),
+    ).toBe(view.requestId);
+
+    const recovered = new PendingApprovalsStore(() => {}, persistence);
+    expect(
+      await recovered.consumeApproved({ ...args, reuseAfterConsume: true }),
+    ).toBe(view.requestId);
+    first.clearAll();
+    recovered.clearAll();
   });
 });
 
@@ -202,7 +242,7 @@ describe("permissions approval HTTP API", () => {
     await respondRoute.handler(matching.ctx as never, async () => {});
     expect(matching.captured.status).toBe(200);
     expect(
-      pendingApprovals.consumeApproved({
+      await pendingApprovals.consumeApproved({
         authSub: "user:alice",
         sessionId: "thread-A",
         toolName: "paper.promote_candidate",

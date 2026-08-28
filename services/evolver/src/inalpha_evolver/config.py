@@ -62,7 +62,7 @@ class EvolverSettings(BaseSettings):
         alias="EVOLVER_QUEUE_TIMEOUT_S",
         ge=60,
         le=86400,
-        description="queued run 最长等待时间；必须短于凭据 grant 的 48 小时有效期。",
+        description="queued run 最长等待时间；必须短于凭据 grant 的 30 小时有效期。",
     )
     evolver_account_active_limit: int = Field(
         default=2,
@@ -87,6 +87,11 @@ class EvolverSettings(BaseSettings):
     jwt_secret: str = Field(default="dev-secret", alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     service_token_ttl_s: int = Field(default=3600, ge=60, le=86400)
+    evolution_credential_public_key_b64: str = Field(
+        default="",
+        alias="EVOLUTION_CREDENTIAL_PUBLIC_KEY_B64",
+        description="Orchestration Ed25519 签名公钥（SPKI DER base64）。",
+    )
 
     # ---- LLM ----
     llm_api_key: str = Field(

@@ -580,6 +580,7 @@
       "cost": "费用",
       "failure": "失败码",
       "dataset": "冻结数据集",
+      "llmSnapshot": "冻结 LLM 与定价",
       "seedReport": "种子报告",
       "baseline": "市场基准",
       "notAvailable": "尚不可用",

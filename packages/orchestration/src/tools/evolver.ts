@@ -24,16 +24,13 @@ export const evolverRunEvolutionTool = createTool({
   }),
   execute: async (inputData, ctx) => {
     const approved = await getApprovedEvolutionRunContext(
+      inputData,
       ctx?.requestContext as ToolRequestContext | undefined,
     );
     return await approved.client.startRun({
-      budget: inputData.budget,
-      seedStrategyId: inputData.seedStrategyId,
-      config: inputData.config,
+      request: approved.request,
       idempotencyKey: approved.operationId,
-      approvalToken: approved.approvalToken,
       credentialGrant: approved.credentialGrant,
-      llmSnapshot: approved.llmSnapshot,
     });
   },
 });

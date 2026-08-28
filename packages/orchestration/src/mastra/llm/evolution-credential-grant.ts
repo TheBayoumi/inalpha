@@ -16,6 +16,7 @@ const GRANT_TTL_SECONDS = 30 * 60 * 60;
 export async function mintEvolutionCredentialGrant(args: {
   authSub: string;
   operationId: string;
+  requestDigest: string;
   snapshot: EvolutionLLMSnapshot;
 }): Promise<string> {
   const encoded = process.env.EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64?.trim();
@@ -38,11 +39,12 @@ export async function mintEvolutionCredentialGrant(args: {
     config_id: args.snapshot.config_id,
     provider: args.snapshot.provider,
     operation_id: args.operationId,
+    request_digest: args.requestDigest,
     llm_config_digest: args.snapshot.config_digest,
   })
     .setProtectedHeader({ alg: "EdDSA", typ: "JWT" })
     .setSubject(args.authSub)
-    .setAudience(GRANT_AUDIENCE)
+    .setAudience(["inalpha-evolver", GRANT_AUDIENCE])
     .setJti(randomUUID())
     .setIssuedAt(now)
     .setExpirationTime(now + GRANT_TTL_SECONDS)

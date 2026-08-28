@@ -57,6 +57,7 @@ WHERE status='queued' AND queued_at < %s - make_interval(secs => %s)""",
         )
         await cur.execute(
             f"""WITH picked AS(SELECT run_id FROM strategy_evo_runs WHERE status='queued'
+AND llm_snapshot_required AND llm_credential_grant_required
 ORDER BY queued_at FOR UPDATE SKIP LOCKED LIMIT 1)UPDATE strategy_evo_runs r SET
 status='running',active_stage='loading_data',started_at=%s,updated_at=%s FROM picked
 WHERE r.run_id=picked.run_id RETURNING {",".join(f"r.{name.strip()}" for name in _COLUMNS.split(","))}""",
@@ -97,6 +98,13 @@ async def reconcile_interrupted(conn: AsyncConnection) -> int:
     """服务重启时保留 queued，收口可能已计费的 active run。"""
     now = datetime.now(UTC)
     async with conn.cursor() as cur:
+        await cur.execute(
+            """UPDATE strategy_evo_runs SET status='aborted',active_stage='aborted',
+finished_at=%s,updated_at=%s,failure_code='EVOLUTION_UPGRADE_ABORTED',
+failure_message='run queued by an image without owner LLM authorization metadata'
+WHERE status='queued' AND (NOT llm_snapshot_required OR NOT llm_credential_grant_required)""",
+            (now, now),
+        )
         await cur.execute(
             """UPDATE strategy_evo_candidates c SET stage='completed',outcome='cancelled',
 error_code='EVOLUTION_SERVICE_RESTARTED',error_message='service restarted during execution',

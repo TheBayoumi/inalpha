@@ -17,7 +17,7 @@ from ..storage import run_queries, runs
 from .approval import verify_evolution_approval
 from .cursor import decode_cursor, encode_cursor
 from .presenters import run_response
-from .request_hash import normalized_request
+from .request_hash import approval_request_digest, normalized_request
 from .schemas import RunListResponse, RunStatusResponse, StartRunRequest
 
 router = APIRouter()
@@ -31,10 +31,6 @@ async def start_run(
     db: DBConn,
     user: Annotated[User, Depends(get_current_user)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
-    evolution_approval: Annotated[
-        str,
-        Header(alias="X-Evolution-Approval", min_length=20, max_length=4096),
-    ],
     evolution_credential: Annotated[
         str,
         Header(alias="X-Evolution-Credential", min_length=100, max_length=4096),
@@ -42,14 +38,17 @@ async def start_run(
 ) -> RunStatusResponse:
     owner = account_id_from_user(user)
     settings = get_evolver_settings()
+    config, request_hash = normalized_request(body)
     verify_evolution_approval(
-        evolution_approval,
+        evolution_credential,
         owner_sub=user.user_id,
         operation_id=idempotency_key,
+        config_id=body.llm.config_id,
+        provider=body.llm.provider,
         llm_config_digest=body.llm.config_digest,
+        request_digest=approval_request_digest(body),
         settings=settings,
     )
-    config, request_hash = normalized_request(body)
     async with db.transaction():
         await db.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (str(owner),))
         active = await run_queries.count_active(db, owner)

@@ -540,6 +540,23 @@ export type EvolutionRunStatus =
   | "failed"
   | "aborted";
 
+export interface EvolutionLLMSnapshot {
+  config_id: string;
+  provider: "deepseek" | "openai" | "kimi" | "zhipu";
+  model: string;
+  base_url: string | null;
+  pricing: {
+    version: string;
+    currency: "USD";
+    input_usd_per_million: number;
+    output_usd_per_million: number;
+    assumed_input_tokens: number;
+    max_output_tokens: number;
+    estimated_max_usd_per_candidate: number;
+  };
+  config_digest: string;
+}
+
 export interface EvolutionCandidateSummary {
   candidate_id: string;
   run_id: string;
@@ -568,6 +585,8 @@ export interface EvolutionRunSummary {
   seed_strategy_id: string;
   budget: number;
   config: Record<string, unknown>;
+  llm_snapshot: EvolutionLLMSnapshot | null;
+  llm_config_digest: string | null;
   status: EvolutionRunStatus;
   active_stage: string | null;
   llm_cost_usd: number;

@@ -10,20 +10,24 @@
  *
  * 何时用：仅 `PendingApprovalsStore`（写）与 permissions HTTP API（读 history）。
  *
- * 何时不用：审批**决策**永远走内存 Promise —— 本层是审计面不是闸门；
- * 单测用 setPool() 注 mock，不连真实库。
+ * 何时不用：普通 ask 审批的决策仍走内存；只有会产生成本的演化操作
+ * 额外使用本层恢复稳定 operation ID。单测用 setPool() 注 mock。
  *
  * 坑：
  *
- * - **fail-open**：任何落库失败只 console.error，绝不阻断审批流（闸门语义
- *   fail-closed 在 pending.ts，审计面挂了不能把审批一起拖死）
+ * - 审计写入仍 fail-open；演化 operation ledger 的 DB 错误会向上抛出，由
+ *   pending.ts fail-closed，避免重启/超时后丢失幂等边界。
  * - DATABASE_URL 未配置时本层整体降级为 no-op（dev 无 PG 也能跑）
  */
 import { Pool, type PoolConfig } from "pg";
 
 import { getSettings } from "../config.js";
 import { maskSensitive } from "../redact.js";
-import type { PendingApprovalView, PendingDecision } from "./pending.js";
+import type {
+  EvolutionOperationScope,
+  PendingApprovalView,
+  PendingDecision,
+} from "./pending.js";
 
 /** 终态：决策 / 超时 / 重启扫尾。 */
 export type ApprovalStatus =
@@ -133,6 +137,53 @@ export async function markResolved(
   } catch (err) {
     console.error("[approvals-repo] markResolved 失败（审批流不受影响）:", err);
   }
+}
+
+/** Persist one approved evolution identity before the costful tool is allowed to execute. */
+export async function rememberEvolutionOperation(
+  args: EvolutionOperationScope & { operationId: string },
+): Promise<{ expiresAt: string } | undefined> {
+  const pool = getPoolOrNull();
+  if (!pool) return undefined;
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1_000);
+  const result = await pool.query(
+    `INSERT INTO evolution_approval_operations
+       (operation_id,auth_sub,session_id,tool_name,input_digest,approved_at,expires_at)
+     VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+     ON CONFLICT (auth_sub,session_id,tool_name,input_digest) DO UPDATE SET
+       operation_id=EXCLUDED.operation_id,
+       approved_at=EXCLUDED.approved_at,
+       expires_at=EXCLUDED.expires_at
+     RETURNING expires_at`,
+    [
+      args.operationId,
+      args.authSub,
+      args.sessionId,
+      args.toolName,
+      args.inputDigest,
+      expiresAt,
+    ],
+  );
+  const row = result.rows[0];
+  return row ? { expiresAt: toIso(row.expires_at) } : undefined;
+}
+
+/** Recover an unexpired evolution operation after orchestration restart or transport timeout. */
+export async function findEvolutionOperation(
+  args: EvolutionOperationScope,
+): Promise<{ operationId: string; expiresAt: string } | undefined> {
+  const pool = getPoolOrNull();
+  if (!pool) return undefined;
+  const result = await pool.query(
+    `SELECT operation_id,expires_at FROM evolution_approval_operations
+     WHERE auth_sub=$1 AND session_id=$2 AND tool_name=$3 AND input_digest=$4
+       AND expires_at>NOW()`,
+    [args.authSub, args.sessionId, args.toolName, args.inputDigest],
+  );
+  const row = result.rows[0];
+  return row
+    ? { operationId: String(row.operation_id), expiresAt: toIso(row.expires_at) }
+    : undefined;
 }
 
 /**
