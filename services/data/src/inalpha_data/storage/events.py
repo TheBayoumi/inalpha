@@ -42,6 +42,11 @@ def _json_default(value: Any) -> str:
     raise TypeError(f"unsupported canonical JSON value: {type(value).__name__}")
 
 
+def _advisory_lock_key(*parts: object) -> str:
+    """Return a PostgreSQL-safe, collision-resistant text key for advisory locks."""
+    return _canonical_hash(list(parts))
+
+
 async def ingest_raw_event(
     conn: AsyncConnection,
     request: RawEventIngestRequest,
@@ -57,7 +62,7 @@ async def ingest_raw_event(
             "retracted": request.retracted,
         }
     )
-    lock_key = f"{request.source}\0{request.source_event_id}"
+    lock_key = _advisory_lock_key(request.source, request.source_event_id)
     async with conn.cursor() as cur:
         await cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (lock_key,))
         await cur.execute(
@@ -111,7 +116,7 @@ async def write_fact(
     """Append a normalized fact revision after validating its raw event boundary."""
     fact_payload = request.model_dump(mode="json", exclude={"raw_event_id"})
     fact_hash = _canonical_hash(fact_payload)
-    lock_key = f"{request.raw_event_id}\0{request.fact_key}"
+    lock_key = _advisory_lock_key(request.raw_event_id, request.fact_key)
     async with conn.cursor() as cur:
         await cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (lock_key,))
         await cur.execute(

@@ -8,6 +8,16 @@ import pytest
 from pydantic import ValidationError
 
 from inalpha_data.event_models import EventFactWriteRequest, RawEventIngestRequest
+from inalpha_data.storage.events import _advisory_lock_key
+
+
+def test_event_advisory_lock_key_is_postgresql_safe_and_unambiguous() -> None:
+    first = _advisory_lock_key("local-demo", "listing-01")
+
+    assert "\0" not in first
+    assert len(first) == 64
+    assert first == _advisory_lock_key("local-demo", "listing-01")
+    assert _advisory_lock_key("a", "bc") != _advisory_lock_key("ab", "c")
 
 
 def test_realtime_raw_event_cannot_claim_acceptance_before_first_seen() -> None:
