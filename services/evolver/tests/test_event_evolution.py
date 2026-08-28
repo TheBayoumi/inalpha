@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
+from inalpha_paper.engine.backtest import BacktestEngine
+from inalpha_paper.execution.exchange import EventExecutionPolicy
+from inalpha_paper.kernel.identifiers import InstrumentId
+from inalpha_paper.model.data import Bar
+from inalpha_paper.model.market_events import MarketEvent
 from inalpha_paper.strategy_authoring import audit_strategy_code, load_strategy_class
 from inalpha_shared_llm.types import CacheMetrics, MutationResponse
 
@@ -15,9 +21,15 @@ from inalpha_evolver.hypothesis.compiler import (
 )
 from inalpha_evolver.hypothesis.models import HypothesisSpec
 from inalpha_evolver.hypothesis.proposer import propose_generation
+from inalpha_evolver.hypothesis.seeding import seed_generation_one
 from inalpha_evolver.hypothesis.selection import (
     HypothesisScore,
+    ImplementationScore,
+    _apply_niche_cap,
     benjamini_hochberg,
+    block_bootstrap_p_value,
+    credit_hypothesis,
+    pareto_ranks,
     plan_next_generation,
 )
 from inalpha_evolver.mutator import Mutator
@@ -34,6 +46,64 @@ def _spec() -> HypothesisSpec:
         direction="long",
         trigger_mode="confirmed",
     )
+
+
+def _bars() -> list[Bar]:
+    instrument = InstrumentId(symbol="BTC/USDT", venue="binance")
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    return [
+        Bar(
+            instrument_id=instrument,
+            timeframe="1h",
+            open=100 + index,
+            high=101 + index,
+            low=99 + index,
+            close=100 + index,
+            volume=1_000,
+            ts_open=int((start + timedelta(hours=index)).timestamp() * 1e9),
+            ts_event=int((start + timedelta(hours=index + 1)).timestamp() * 1e9),
+            ts_init=int((start + timedelta(hours=index + 1)).timestamp() * 1e9),
+        )
+        for index in range(8)
+    ]
+
+
+def _event(bars: list[Bar]) -> MarketEvent:
+    available_at = bars[1].bar_open_at + 30 * 60 * 1_000_000_000
+    return MarketEvent(
+        event_id="listing-1",
+        event_type="listing",
+        assets=("BTC",),
+        action="exchange lists BTC",
+        severity=1.0,
+        confidence=1.0,
+        effective_at=available_at,
+        available_at=available_at,
+    )
+
+
+def _run_compiled(spec: HypothesisSpec) -> int:
+    bars = _bars()
+    compiled = compile_hypothesis(spec)
+    strategy_class = load_strategy_class(compiled.source_code)
+    engine = BacktestEngine(
+        fee_rate=0,
+        event_execution_policy=EventExecutionPolicy(),
+    )
+    strategy = strategy_class(
+        f"compiled-{spec.trigger_mode}",
+        engine.clock,
+        engine.msgbus,
+        instrument_id=bars[0].instrument_id,
+    )
+    engine.add_strategy(strategy)
+    return len(engine.run(bars, events=[_event(bars)]).fills)
+
+
+def _updated_spec(**updates: object) -> HypothesisSpec:
+    payload = _spec().model_dump(mode="python")
+    payload.update(updates)
+    return HypothesisSpec.model_validate(payload)
 
 
 def test_strong_event_expands_to_three_auditable_ablation_arms() -> None:
@@ -98,6 +168,125 @@ def test_restart_parent_becomes_a_regular_lane_when_inherited() -> None:
 
 def test_benjamini_hochberg_controls_the_whole_generation() -> None:
     assert benjamini_hochberg([0.001, 0.01, 0.04, 0.2], q=0.05) == [True, True, False, False]
+
+
+@pytest.mark.parametrize(
+    ("trigger_mode", "expected_trades"),
+    [("direct", 1), ("confirmed", 1), ("hybrid", 2)],
+)
+def test_compiled_trigger_arms_execute_their_distinct_entry_paths(
+    trigger_mode: str,
+    expected_trades: int,
+) -> None:
+    spec = _updated_spec(
+        trigger_mode=trigger_mode,
+        confirmation={"min_price_change_pct": 0.1, "min_volume_ratio": 0.1},
+    )
+
+    assert _run_compiled(spec) == expected_trades
+
+
+def test_compiled_confirmation_expires_at_ttl_without_a_trade() -> None:
+    spec = _updated_spec(
+        confirmation={"min_price_change_pct": 30.0, "min_volume_ratio": 20.0},
+        invalidation={"ttl_bars": 1, "holding_bars": 12, "max_adverse_pct": 4.0},
+    )
+
+    assert _run_compiled(spec) == 0
+
+
+def test_generation_one_seeds_all_eight_required_direction_lanes() -> None:
+    snapshot = {
+        "facts": [
+            {"fact_id": "fact-exploit", "event_type": "exploit", "severity": 1.0},
+            {"fact_id": "fact-listing", "event_type": "listing", "severity": 0.8},
+            {"fact_id": "fact-halt", "event_type": "chain_halt", "severity": 0.9},
+        ]
+    }
+
+    seeds = seed_generation_one(snapshot, "btc")
+
+    assert len(seeds) == 8
+    assert [seed.lane for seed in seeds] == [
+        "event",
+        "event",
+        "event",
+        "event_regime",
+        "factor",
+        "execution_risk",
+        "regime",
+        "restart",
+    ]
+    assert seeds[0].trigger_mode == "direct"
+    assert seeds[-1].lineage_kind == "restart"
+    assert all(seed.assets == ["BTC"] for seed in seeds)
+    assert {item for seed in seeds[:3] for item in seed.evidence_ids} == {
+        "fact-exploit:0",
+        "fact-listing:0",
+        "fact-halt:0",
+    }
+
+
+def test_credit_and_pareto_penalize_fragility_and_rank_dominance() -> None:
+    hypothesis_id = uuid4()
+    strong = ImplementationScore(2.0, 5.0, 1.0, 0.9, 0.9, 0.8, 0.1)
+    weak = ImplementationScore(-2.0, 40.0, -1.0, 0.1, 0.1, 0.1, 0.9)
+    stable = credit_hypothesis(
+        hypothesis_id,
+        lane="event",
+        event_family="listing",
+        trigger_mode="confirmed",
+        implementations=[strong, strong],
+    )
+    fragile = credit_hypothesis(
+        uuid4(),
+        lane="event",
+        event_family="listing",
+        trigger_mode="confirmed",
+        implementations=[strong, weak],
+    )
+
+    assert stable.credit > fragile.credit
+    dominated = HypothesisScore(
+        hypothesis_id=uuid4(),
+        lane=fragile.lane,
+        event_family=fragile.event_family,
+        trigger_mode=fragile.trigger_mode,
+        credit=fragile.credit,
+        objectives=tuple(value - 1.0 for value in stable.objectives),
+    )
+    assert pareto_ranks([stable, dominated]) == {
+        stable.hypothesis_id: 0,
+        dominated.hypothesis_id: 1,
+    }
+
+
+def test_selection_caps_niches_and_rejects_invalid_statistics() -> None:
+    same_niche = [
+        HypothesisScore(
+            hypothesis_id=uuid4(),
+            lane="event",
+            event_family="listing",
+            trigger_mode="confirmed",
+            credit=float(credit),
+            objectives=(float(credit),) * 6,
+        )
+        for credit in (1, 3, 2)
+    ]
+
+    capped = _apply_niche_cap(same_niche, cap=2)
+
+    assert [item.credit for item in capped] == [3.0, 2.0]
+    assert block_bootstrap_p_value([], samples=100) == 1.0
+    assert block_bootstrap_p_value([1.0, -0.5, 0.8], samples=100, seed=7) == (
+        block_bootstrap_p_value([1.0, -0.5, 0.8], samples=100, seed=7)
+    )
+    with pytest.raises(ValueError, match="q must be within"):
+        benjamini_hochberg([0.1], q=0)
+    with pytest.raises(ValueError, match="p-values"):
+        benjamini_hochberg([-0.1])
+    with pytest.raises(ValueError, match="samples"):
+        block_bootstrap_p_value([1.0], samples=99)
 
 
 class _ProposalClient:
