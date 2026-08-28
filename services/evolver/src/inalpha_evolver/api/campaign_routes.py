@@ -174,7 +174,12 @@ async def start_campaign(
         owner,
         from_statuses=("draft",),
         to_status="replaying",
-        values={"active_generation": 1},
+        values={
+            "active_generation": 1,
+            "failure_code": None,
+            "failure_message": None,
+            "finished_at": None,
+        },
     )
     if row is None:
         raise ConflictError("campaign cannot start", code="CAMPAIGN_STATE_CONFLICT")

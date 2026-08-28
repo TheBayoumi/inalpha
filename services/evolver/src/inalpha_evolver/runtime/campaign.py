@@ -39,9 +39,18 @@ from ..storage import campaigns as store
 
 async def execute_campaign(campaign: dict[str, Any], settings: EvolverSettings) -> None:
     """Run remaining generations, then lock one champion for isolated forward evidence."""
+    config = _campaign_config(campaign)
+    dataset, snapshot = await _load_frozen_inputs(campaign, config, settings)
     mutator = await build_owner_mutator(campaign, settings)
     try:
-        await _execute_campaign(campaign, settings, mutator)
+        await _execute_campaign(
+            campaign,
+            settings,
+            mutator,
+            config=config,
+            dataset=dataset,
+            snapshot=snapshot,
+        )
     finally:
         await mutator.close()
 
@@ -62,7 +71,11 @@ async def evaluate_sealed_holdout(
         }
     )
     token = _service_token(campaign["owner_account_id"], settings)
-    async with DataClient(settings.data_service_url, token) as client:
+    async with DataClient(
+        settings.data_service_url,
+        token,
+        timeout=settings.evolver_data_timeout_s,
+    ) as client:
         dataset = await FrozenBarsLoader(client).load(
             venue=config.venue,
             symbol=config.symbol,
@@ -142,25 +155,12 @@ async def _execute_campaign(
     campaign: dict[str, Any],
     settings: EvolverSettings,
     mutator: Mutator,
+    *,
+    config: CampaignConfig,
+    dataset: FrozenDataset,
+    snapshot: dict[str, Any],
 ) -> None:
     """Execute one credential-bound campaign while keeping the key process-local."""
-    config = CampaignConfig.model_validate(
-        {
-            key: campaign["frozen_config"][key]
-            for key in CampaignConfig.model_fields
-            if key in campaign["frozen_config"]
-        }
-    )
-    token = _service_token(campaign["owner_account_id"], settings)
-    async with DataClient(settings.data_service_url, token) as client:
-        dataset = await FrozenBarsLoader(client).load(
-            venue=config.venue,
-            symbol=config.symbol,
-            timeframe=config.timeframe,
-            from_ts=config.from_ts,
-            as_of=config.as_of,
-        )
-        snapshot = await client.get_event_snapshot(str(campaign["event_snapshot_id"]))
     all_events = tuple(market_event_from_fact(item) for item in snapshot["facts"])
     search_dataset, validation_bars = _search_dataset(dataset)
     search_events = tuple(
@@ -639,6 +639,39 @@ def _search_dataset(dataset: FrozenDataset) -> tuple[FrozenDataset, tuple[Any, .
         }
     )
     return FrozenDataset(tuple(search_bars), manifest), tuple(validation_bars)
+
+
+def _campaign_config(campaign: dict[str, Any]) -> CampaignConfig:
+    return CampaignConfig.model_validate(
+        {
+            key: campaign["frozen_config"][key]
+            for key in CampaignConfig.model_fields
+            if key in campaign["frozen_config"]
+        }
+    )
+
+
+async def _load_frozen_inputs(
+    campaign: dict[str, Any],
+    config: CampaignConfig,
+    settings: EvolverSettings,
+) -> tuple[FrozenDataset, dict[str, Any]]:
+    """Validate frozen market and event inputs before redeeming the owner LLM grant."""
+    token = _service_token(campaign["owner_account_id"], settings)
+    async with DataClient(
+        settings.data_service_url,
+        token,
+        timeout=settings.evolver_data_timeout_s,
+    ) as client:
+        dataset = await FrozenBarsLoader(client).load(
+            venue=config.venue,
+            symbol=config.symbol,
+            timeframe=config.timeframe,
+            from_ts=config.from_ts,
+            as_of=config.as_of,
+        )
+        snapshot = await client.get_event_snapshot(str(campaign["event_snapshot_id"]))
+    return dataset, snapshot
 
 
 def _implementation_profile(

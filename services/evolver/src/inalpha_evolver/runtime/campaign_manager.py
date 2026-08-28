@@ -8,11 +8,15 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from inalpha_shared import get_logger
 from inalpha_shared.db import get_conn
 
 from ..config import EvolverSettings
+from ..owner_llm import CredentialTemporarilyUnavailable
 from ..storage import campaigns as store
 from .campaign import execute_campaign
+
+_logger = get_logger(__name__)
 
 
 class CampaignManager:
@@ -91,17 +95,38 @@ class CampaignManager:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                failure = _primary_exception(exc)
+                failure_message = str(getattr(failure, "message", failure))
+                failure_code = str(getattr(failure, "code", "CAMPAIGN_FAILED"))
+                retryable = isinstance(failure, CredentialTemporarilyUnavailable) or (
+                    failure_code
+                    in {
+                        "EVOLUTION_DATA_FRESHNESS_FAILED",
+                        "EVOLUTION_DATA_UNREACHABLE",
+                    }
+                )
+                _logger.exception(
+                    "campaign_execution_failed",
+                    campaign_id=str(campaign["campaign_id"]),
+                    failure_type=type(failure).__name__,
+                    failure_code=failure_code,
+                    failure_message=failure_message,
+                    retryable=retryable,
+                )
                 async with get_conn() as conn:
                     await store.transition(
                         conn,
                         campaign["campaign_id"],
                         campaign["owner_account_id"],
                         from_statuses=("replaying",),
-                        to_status="failed",
+                        to_status="draft" if retryable else "failed",
                         values={
-                            "failure_code": str(getattr(exc, "code", "CAMPAIGN_FAILED")),
-                            "failure_message": str(exc)[:1000],
-                            "finished_at": datetime.now(UTC),
+                            "failure_code": failure_code,
+                            "failure_message": failure_message[:1000],
+                            "finished_at": None if retryable else datetime.now(UTC),
+                            "lease_owner": None,
+                            "lease_token": None,
+                            "lease_expires_at": None,
                         },
                     )
 
@@ -139,6 +164,17 @@ class CampaignManager:
             await asyncio.wait_for(self.wake.wait(), timeout=1.0)
         except TimeoutError:
             pass
+
+
+def _primary_exception(exc: Exception) -> Exception:
+    """Unwrap TaskGroup failures so persisted campaign errors remain actionable."""
+    current = exc
+    while isinstance(current, BaseExceptionGroup):
+        nested = [item for item in current.exceptions if isinstance(item, Exception)]
+        if not nested:
+            return exc
+        current = nested[0]
+    return current
 
 
 __all__ = ["CampaignManager"]
