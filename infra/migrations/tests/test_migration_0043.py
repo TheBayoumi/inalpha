@@ -85,6 +85,22 @@ def test_0043_builds_event_campaign_schema_and_reversible_grant_scope(
                 SET redemption_count=9 WHERE jti='44444444-4444-4444-8444-444444444443'"""
             )
 
+    blocked = alembic(migration_db_url, "downgrade", "0042", check=False)
+    assert blocked.returncode != 0
+    assert "cannot downgrade 0043 while E2 event or campaign records exist" in (
+        blocked.stderr
+    )
+
+    with psycopg.connect(db_url(migration_db_url), autocommit=True) as conn:
+        conn.execute("DELETE FROM evolution_campaigns")
+        conn.execute("DELETE FROM market_event_snapshot_facts")
+        conn.execute("DELETE FROM market_event_snapshots")
+        conn.execute("DELETE FROM market_event_facts")
+        conn.execute("DELETE FROM raw_market_events")
+        conn.execute(
+            "DELETE FROM evolution_credential_grant_uses WHERE grant_purpose='event_campaign'"
+        )
+
     alembic(migration_db_url, "downgrade", "0042")
     with psycopg.connect(db_url(migration_db_url), autocommit=True) as conn:
         assert conn.execute("SELECT to_regclass('evolution_campaigns')").fetchone() == (

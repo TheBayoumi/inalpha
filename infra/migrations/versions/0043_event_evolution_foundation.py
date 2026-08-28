@@ -232,6 +232,22 @@ def downgrade() -> None:
     """Remove E2 records without changing the existing E1 schema."""
     op.execute(
         """SET LOCAL lock_timeout = '10s';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM raw_market_events LIMIT 1)
+     OR EXISTS (SELECT 1 FROM market_event_facts LIMIT 1)
+     OR EXISTS (SELECT 1 FROM market_event_snapshots LIMIT 1)
+     OR EXISTS (SELECT 1 FROM evolution_campaigns LIMIT 1)
+     OR EXISTS (SELECT 1 FROM strategy_artifacts LIMIT 1)
+     OR EXISTS (SELECT 1 FROM strategy_adoptions LIMIT 1)
+     OR EXISTS (
+       SELECT 1 FROM evolution_credential_grant_uses
+       WHERE grant_purpose = 'event_campaign' LIMIT 1
+     ) THEN
+    RAISE EXCEPTION
+      'cannot downgrade 0043 while E2 event or campaign records exist; archive and remove them first';
+  END IF;
+END $$;
 DROP TABLE strategy_adoptions;
 DROP TABLE strategy_artifacts;
 ALTER TABLE evolution_campaigns DROP CONSTRAINT evolution_campaign_locked_candidate_fk;
