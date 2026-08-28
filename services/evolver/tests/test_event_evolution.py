@@ -21,6 +21,7 @@ from inalpha_evolver.hypothesis.selection import (
     plan_next_generation,
 )
 from inalpha_evolver.mutator import Mutator
+from inalpha_evolver.runtime.campaign import _clone, _mutate
 
 
 def _spec() -> HypothesisSpec:
@@ -70,6 +71,29 @@ def test_generation_plan_has_fixed_2_4_1_1_topology() -> None:
     assert len(plan.mutation_parents) == 4
     assert len(plan.crossover_parents) == 2
     assert plan.restart_slots == 1
+
+
+def test_restart_parent_becomes_a_regular_lane_when_inherited() -> None:
+    restart = HypothesisSpec(
+        lane="restart",
+        lineage_kind="restart",
+        thesis="随机重启探索安全事件冲击后的延迟价格反应与成交量确认机制。",
+        event_types=["exploit"],
+        direction="short",
+        trigger_mode="confirmed",
+    )
+
+    elite = _clone(
+        restart,
+        lineage_kind="elite",
+        parent_ids=[restart.hypothesis_id],
+    )
+    mutation = _mutate(restart, 0, lineage_kind="mutation")
+
+    assert elite.lane == "event"
+    assert elite.lineage_kind == "elite"
+    assert mutation.lane == "event"
+    assert mutation.lineage_kind == "mutation"
 
 
 def test_benjamini_hochberg_controls_the_whole_generation() -> None:

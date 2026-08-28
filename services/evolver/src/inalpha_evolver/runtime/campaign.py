@@ -512,6 +512,10 @@ def _clone(
 ) -> HypothesisSpec:
     payload = parent.model_dump(mode="json")
     payload.update(updates or {})
+    if payload["lane"] == "restart" and lineage_kind != "restart":
+        payload["lane"] = (
+            "event_regime" if payload.get("applicable_regimes") else "event"
+        )
     payload.update(
         {
             "hypothesis_id": str(uuid4()),
