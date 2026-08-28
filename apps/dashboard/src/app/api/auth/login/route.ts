@@ -8,6 +8,8 @@ import {
   createSessionToken,
 } from "@/lib/session";
 
+import { PublicJsonError, readLimitedJson } from "../request-json";
+
 /**
  * 登录:校验凭据 → 落 session cookie。
  *
@@ -18,9 +20,13 @@ export async function POST(req: Request): Promise<Response> {
   let email: unknown;
   let password: unknown;
   try {
-    ({ email, password } = await req.json());
-  } catch {
-    return NextResponse.json({ error: "请求体格式错误" }, { status: 400 });
+    ({ email, password } = (await readLimitedJson(req)) as {
+      email?: unknown;
+      password?: unknown;
+    });
+  } catch (error) {
+    const status = error instanceof PublicJsonError ? error.status : 400;
+    return NextResponse.json({ error: "请求体格式错误" }, { status });
   }
   if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
     return NextResponse.json({ error: "缺少邮箱或密码" }, { status: 400 });
@@ -54,6 +60,17 @@ export async function POST(req: Request): Promise<Response> {
         { error: "尝试过于频繁,请稍后再试" },
         { status: 429 },
       );
+    }
+    if (err instanceof BackendError && err.status === 403) {
+      const detail = err.detail as { code?: unknown } | undefined;
+      const code = typeof detail?.code === "string" ? detail.code : undefined;
+      if (
+        code === "ACCOUNT_PENDING" ||
+        code === "ACCOUNT_ACTIVATION_REQUIRED" ||
+        code === "ACCOUNT_REJECTED"
+      ) {
+        return NextResponse.json({ error: code }, { status: 403 });
+      }
     }
     return NextResponse.json({ error: "登录服务暂不可用,请稍后重试" }, { status: 502 });
   }

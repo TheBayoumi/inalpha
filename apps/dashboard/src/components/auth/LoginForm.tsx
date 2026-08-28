@@ -21,6 +21,11 @@ const STRINGS = {
     invalid: "Incorrect email or password",
     rateLimited: "Too many attempts, try again later",
     unavailable: "Login service unavailable, try again later",
+    pending: "Your trial request is still under review",
+    activationRequired: "Open the activation link sent to your email before signing in",
+    rejected: "Your trial request was not approved",
+    applyPrompt: "Need access?",
+    apply: "Request a trial",
   },
   zh: {
     title: "操作控制台",
@@ -32,6 +37,11 @@ const STRINGS = {
     invalid: "邮箱或密码不正确",
     rateLimited: "尝试过于频繁,请稍后再试",
     unavailable: "登录服务暂不可用,请稍后重试",
+    pending: "你的试用申请仍在审核中",
+    activationRequired: "请先打开邮件中的激活链接设置密码",
+    rejected: "你的试用申请暂未通过",
+    applyPrompt: "还没有访问权限？",
+    apply: "申请试用",
   },
 };
 
@@ -63,12 +73,19 @@ export function LoginForm() {
         router.refresh();
         return;
       }
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
       setError(
         res.status === 401
           ? t.invalid
-          : res.status === 429
-            ? t.rateLimited
-            : t.unavailable,
+          : res.status === 403 && data?.error === "ACCOUNT_PENDING"
+            ? t.pending
+            : res.status === 403 && data?.error === "ACCOUNT_ACTIVATION_REQUIRED"
+              ? t.activationRequired
+              : res.status === 403 && data?.error === "ACCOUNT_REJECTED"
+                ? t.rejected
+                : res.status === 429
+                  ? t.rateLimited
+                  : t.unavailable,
       );
     } catch {
       setError(t.unavailable);
@@ -144,6 +161,16 @@ export function LoginForm() {
       >
         {loading ? t.submitting : t.submit}
       </button>
+
+      <p className="mt-5 text-center text-xs text-fg-muted">
+        {t.applyPrompt}{" "}
+        <a
+          href={`/register${from ? `?from=${encodeURIComponent(from)}` : ""}`}
+          className="text-cyan transition-colors hover:text-fg"
+        >
+          {t.apply}
+        </a>
+      </p>
     </form>
   );
 }
