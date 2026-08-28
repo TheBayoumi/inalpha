@@ -79,6 +79,13 @@ def upgrade() -> None:
         """
     )
     op.execute(
+        """
+        CREATE TRIGGER user_access_events_no_truncate
+        BEFORE TRUNCATE ON user_access_events
+        FOR EACH STATEMENT EXECUTE FUNCTION reject_user_access_event_mutation()
+        """
+    )
+    op.execute(
         "CREATE INDEX IF NOT EXISTS user_access_events_target_created_idx "
         "ON user_access_events (target_subject, created_at DESC)"
     )

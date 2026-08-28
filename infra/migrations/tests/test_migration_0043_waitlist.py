@@ -66,6 +66,8 @@ def test_0043_waitlist_preserves_existing_access_and_guards_downgrade(
             )
         with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
             conn.execute("DELETE FROM user_access_events WHERE id=%s", (event_id,))
+        with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+            conn.execute("TRUNCATE user_access_events")
         conn.execute("DELETE FROM users WHERE subject='user:existing'")
         assert conn.execute(
             "SELECT target_subject FROM user_access_events WHERE id=%s", (event_id,)
