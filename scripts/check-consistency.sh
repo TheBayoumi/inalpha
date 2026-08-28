@@ -264,6 +264,19 @@ for file in infra/docker/Dockerfile.evolver services/evolver/uv.lock; do
     [[ -f "$file" ]] && ok "$file 存在" || fail "$file 不存在"
 done
 
+# ---------- C10: 生产部署环境文件路径不被 Compose 变量覆盖 ----------
+sect "C10 · 生产部署环境文件路径变量隔离"
+
+DEPLOY_SCRIPT="scripts/deploy.sh"
+if grep -qF 'HOST_ENV_FILE="infra/.env.prod"' "$DEPLOY_SCRIPT" \
+    && grep -qF -- '--env-file "$HOST_ENV_FILE"' "$DEPLOY_SCRIPT" \
+    && grep -qF '[ -f "$HOST_ENV_FILE" ]' "$DEPLOY_SCRIPT" \
+    && grep -qF 'export ENV_FILE=.env.prod' "$DEPLOY_SCRIPT"; then
+    ok "主机 env 路径与 Compose ENV_FILE 已分离"
+else
+    fail "$DEPLOY_SCRIPT 必须分别维护主机 env 路径与 Compose ENV_FILE"
+fi
+
 # ---------- 总结 ----------
 echo
 echo "===================="
