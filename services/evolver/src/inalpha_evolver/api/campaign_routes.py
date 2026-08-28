@@ -85,6 +85,7 @@ async def create_campaign(
         provider=body.llm.provider,
         llm_config_digest=body.llm.config_digest,
         request_digest=digest,
+        grant_purpose="event_campaign",
         settings=settings,
     )
     for hypothesis in hypotheses:
