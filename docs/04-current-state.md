@@ -96,7 +96,8 @@ sequenceDiagram
 - `admin@inalpha.dev` 需通过 `create-user --roles admin` 显式授予角色；审核 API 每次从
   数据库实时读取角色，不信任前端菜单或旧 session。迁移不会按邮箱静默提权。
 - 注册对重复邮箱统一返回 202，不覆盖原申请也不泄露邮箱是否存在；服务内有 per-email +
-  global 双层限流。登录/激活的 Argon2 工作共享并发门控，计算期间不占数据库连接。
+  global 双层限流。登录/激活的 Argon2 工作分别使用独立、非排队并发门控，计算期间
+  不占数据库连接。
 - 公网部署必须在反向代理 / CDN 对 `/api/auth/register` 启用持久化 per-IP 限流或人机
   验证；应用进程内限流仅作为第二道防线。
 
