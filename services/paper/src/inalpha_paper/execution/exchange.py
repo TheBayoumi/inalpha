@@ -296,10 +296,14 @@ class SimulatedExchange(Gateway):
                 self._previous_volume is not None
                 and fill_qty > self._previous_volume * self._event_policy.max_participation_rate
             ):
+                participation_limit = (
+                    f"{self._event_policy.max_participation_rate * 100:g}%"
+                )
                 self._emit_denied(
                     order,
                     strategy_id,
-                    "EVENT_CAPACITY_EXCEEDED: order quantity exceeds 1% of previously known bar volume",
+                    "EVENT_CAPACITY_EXCEEDED: order quantity exceeds "
+                    f"{participation_limit} of previously known bar volume",
                 )
                 return None
             if order.type == OrderType.MARKET:

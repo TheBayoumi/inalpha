@@ -125,3 +125,36 @@ async def test_campaign_manager_requeues_temporary_credential_failure(monkeypatc
     assert transition["failure_code"] == "EVOLUTION_CREDENTIAL_UNAVAILABLE"
     assert transition["failure_message"].endswith("ReadTimeout")
     assert transition["lease_expires_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_campaign_dispatcher_recovers_health_after_database_poll(monkeypatch) -> None:
+    """A successful empty poll clears a prior transient dispatcher failure."""
+    settings = SimpleNamespace(campaign_max_concurrent=1, campaign_lease_ttl_s=90)
+    manager = manager_runtime.CampaignManager(settings)  # type: ignore[arg-type]
+    attempts = 0
+
+    @asynccontextmanager
+    async def fake_conn() -> AsyncIterator[object]:
+        yield object()
+
+    async def claim(*args: Any, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("database temporarily unavailable")
+        manager.closing = True
+        return None
+
+    async def no_delay(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(manager_runtime, "get_conn", fake_conn)
+    monkeypatch.setattr(manager_runtime.store, "claim_next_campaign", claim)
+    monkeypatch.setattr(manager_runtime.asyncio, "sleep", no_delay)
+    monkeypatch.setattr(manager, "_wait", no_delay)
+
+    await manager._dispatch()
+
+    assert attempts == 2
+    assert manager.unhealthy_reason is None

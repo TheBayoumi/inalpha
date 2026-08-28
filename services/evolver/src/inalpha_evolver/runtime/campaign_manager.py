@@ -68,6 +68,7 @@ class CampaignManager:
                         worker_id=self.worker_id,
                         ttl_s=self.settings.campaign_lease_ttl_s,
                     )
+                self.unhealthy_reason = None
                 if campaign is None:
                     await self._wait()
                     continue
