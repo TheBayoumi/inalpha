@@ -32,20 +32,18 @@ describe("login BFF access status", () => {
     mockedCreateSessionToken.mockReset();
   });
 
-  it.each(["ACCOUNT_PENDING", "ACCOUNT_ACTIVATION_REQUIRED", "ACCOUNT_REJECTED"])(
-    "preserves the authenticated account status %s without creating a session",
-    async (code) => {
-      mockedBackendFetch.mockRejectedValue(new BackendError(403, code, { code }));
+  it("preserves the generic inactive status after valid credentials", async () => {
+    const code = "ACCOUNT_INACTIVE";
+    mockedBackendFetch.mockRejectedValue(new BackendError(403, code, { code }));
 
-      const response = await POST(loginRequest());
+    const response = await POST(loginRequest());
 
-      expect(response.status).toBe(403);
-      expect(await response.json()).toEqual({ error: code });
-      expect(mockedCreateSessionToken).not.toHaveBeenCalled();
-    },
-  );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: code });
+    expect(mockedCreateSessionToken).not.toHaveBeenCalled();
+  });
 
-  it("does not misclassify an unknown forbidden response as a pending account", async () => {
+  it("does not expose an unknown forbidden response as an account status", async () => {
     mockedBackendFetch.mockRejectedValue(new BackendError(403, "forbidden"));
 
     const response = await POST(loginRequest());

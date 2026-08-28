@@ -89,9 +89,7 @@ def _admin_headers() -> dict[str, str]:
 def test_register_pending_then_admin_approves(
     client: TestClient,
     waitlist_state: None,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(auth_mod, "_DUMMY_HASH", PasswordHasher().hash(_PASSWORD))
     register = client.post(
         "/auth/register",
         json={
@@ -126,8 +124,8 @@ def test_register_pending_then_admin_approves(
             "password": _PASSWORD,
         },
     )
-    assert invited_login.status_code == 403
-    assert invited_login.json()["code"] == "ACCOUNT_ACTIVATION_REQUIRED"
+    assert invited_login.status_code == 401
+    assert invited_login.json()["code"] == "INVALID_CREDENTIALS"
 
     activated = client.post(
         "/auth/activate",
@@ -239,6 +237,7 @@ def test_global_registration_rate_limit_precedes_argon2_work(
     ("email", "display_name", "code"),
     [
         ("not-an-email", "Applicant", "INVALID_EMAIL"),
+        ("a@b@c.com", "Applicant", "INVALID_EMAIL"),
         (_APPLICANT_EMAIL, "   ", "INVALID_DISPLAY_NAME"),
     ],
 )

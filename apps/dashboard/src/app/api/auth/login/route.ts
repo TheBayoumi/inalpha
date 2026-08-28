@@ -64,11 +64,7 @@ export async function POST(req: Request): Promise<Response> {
     if (err instanceof BackendError && err.status === 403) {
       const detail = err.detail as { code?: unknown } | undefined;
       const code = typeof detail?.code === "string" ? detail.code : undefined;
-      if (
-        code === "ACCOUNT_PENDING" ||
-        code === "ACCOUNT_ACTIVATION_REQUIRED" ||
-        code === "ACCOUNT_REJECTED"
-      ) {
+      if (code === "ACCOUNT_INACTIVE") {
         return NextResponse.json({ error: code }, { status: 403 });
       }
     }

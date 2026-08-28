@@ -21,9 +21,7 @@ const STRINGS = {
     invalid: "Incorrect email or password",
     rateLimited: "Too many attempts, try again later",
     unavailable: "Login service unavailable, try again later",
-    pending: "Your trial request is still under review",
-    activationRequired: "Open the activation link sent to your email before signing in",
-    rejected: "Your trial request was not approved",
+    inactive: "This account is not active",
     applyPrompt: "Need access?",
     apply: "Request a trial",
   },
@@ -37,9 +35,7 @@ const STRINGS = {
     invalid: "邮箱或密码不正确",
     rateLimited: "尝试过于频繁,请稍后再试",
     unavailable: "登录服务暂不可用,请稍后重试",
-    pending: "你的试用申请仍在审核中",
-    activationRequired: "请先打开邮件中的激活链接设置密码",
-    rejected: "你的试用申请暂未通过",
+    inactive: "该账号当前不可登录",
     applyPrompt: "还没有访问权限？",
     apply: "申请试用",
   },
@@ -77,15 +73,11 @@ export function LoginForm() {
       setError(
         res.status === 401
           ? t.invalid
-          : res.status === 403 && data?.error === "ACCOUNT_PENDING"
-            ? t.pending
-            : res.status === 403 && data?.error === "ACCOUNT_ACTIVATION_REQUIRED"
-              ? t.activationRequired
-              : res.status === 403 && data?.error === "ACCOUNT_REJECTED"
-                ? t.rejected
-                : res.status === 429
-                  ? t.rateLimited
-                  : t.unavailable,
+          : res.status === 403 && data?.error === "ACCOUNT_INACTIVE"
+            ? t.inactive
+            : res.status === 429
+              ? t.rateLimited
+              : t.unavailable,
       );
     } catch {
       setError(t.unavailable);

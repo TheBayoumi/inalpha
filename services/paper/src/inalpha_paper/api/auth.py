@@ -218,7 +218,8 @@ def _normalize_email(email: str) -> str:
     normalized = email.strip().lower()
     local, separator, domain = normalized.partition("@")
     if (
-        not separator
+        normalized.count("@") != 1
+        or not separator
         or not local
         or not domain
         or "." not in domain
@@ -285,12 +286,6 @@ async def login(body: LoginRequest) -> LoginResponse:
 
     # 密码正确即不算登录失败；待审/拒绝是授权状态，不应把用户累计进爆破节流。
     _login_failures.pop(email_key, None)
-    if row["access_status"] == "pending":
-        raise ForbiddenError("账号申请仍在审核中", code="ACCOUNT_PENDING")
-    if row["access_status"] == "invited":
-        raise ForbiddenError("账号尚未完成激活", code="ACCOUNT_ACTIVATION_REQUIRED")
-    if row["access_status"] == "rejected":
-        raise ForbiddenError("账号申请暂未通过", code="ACCOUNT_REJECTED")
     if row["access_status"] != "active":
         raise ForbiddenError("账号当前不可登录", code="ACCOUNT_INACTIVE")
 
