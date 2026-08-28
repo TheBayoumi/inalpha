@@ -299,6 +299,21 @@ The console is available only on the host at <http://127.0.0.1:3001>. Wait until
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
+For a public deployment, create the review account with the `admin` role (use your
+existing owner subject if it must keep the current account data):
+
+```bash
+bash scripts/selfhost.sh create-user --email admin@inalpha.dev --roles admin --subject console:dev
+```
+
+Visitors can then choose **Request a trial** on the sign-in page. Registration creates a
+`pending` account without accepting a password. Approval in **Trial Waitlist** generates a
+one-time activation link: send it to the applicant's stated email address to verify mailbox
+ownership. The applicant sets a password from the link and only then becomes active. Links
+expire after 48 hours and can be regenerated; rejected applications remain blocked.
+Because the application endpoint is public, keep a persistent per-IP rate limit or challenge
+enabled at the reverse proxy / CDN layer; the in-process limits are only a second line of defence.
+
 Sign in at <http://127.0.0.1:3001>, open **LLM Settings**, and add your provider, model, and personal API key. The Dashboard encrypts it with `LLM_CONFIG_ENCRYPTION_KEY`; the orchestrator and Evolver resolve that owner-scoped credential. The standalone Research service still uses the deployment-level `LLM_PROVIDER` / `LLM_MODEL` and matching provider key in `infra/.env.selfhost`, so configure that block if you need deep dives and treat it as a shared-credential boundary until per-owner propagation lands.
 
 Useful operations:

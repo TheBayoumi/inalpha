@@ -297,6 +297,20 @@ bash scripts/selfhost.sh up
 bash scripts/selfhost.sh create-user --email you@example.com
 ```
 
+公网部署时，用 `admin` 角色创建审核账号；如果该账号需要继承现有 owner 数据，继续使用
+原来的 `console:dev` subject：
+
+```bash
+bash scripts/selfhost.sh create-user --email admin@inalpha.dev --roles admin --subject console:dev
+```
+
+访客可在登录页选择“申请试用”。注册只创建 `pending` 账号且不收密码。管理员在侧边栏
+“试用审核”批准后会得到一次性激活链接：必须通过邮件把链接发到申请人填写的邮箱，以此
+验证邮箱归属；申请人从链接设置密码后才变为 active。链接 48 小时过期，可重新生成；
+被拒绝的申请继续禁止访问，已有账号迁移后保持 active。
+注册端点对公网开放时，反向代理 / CDN 必须启用持久化的 per-IP 限流或人机验证；进程内
+限流只是第二道防线，不能替代边缘防护。
+
 在 <http://127.0.0.1:3001> 登录，打开 **LLM Settings**，填写你的 provider、model 与个人 API key。控制台用 `LLM_CONFIG_ENCRYPTION_KEY` 加密后写入数据库，orchestrator 与 Evolver 按 owner 临时解析。独立 Research service 当前仍读取 `infra/.env.selfhost` 中部署级的 `LLM_PROVIDER` / `LLM_MODEL` 与对应 provider key；需要 deep dive 时须配置该段，并在 per-owner 透传落地前把它视为共享凭据边界。
 
 常用操作：
