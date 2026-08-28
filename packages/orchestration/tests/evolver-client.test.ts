@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildEvolutionStartRequest,
+  buildEventCampaignRequest,
   evolutionRequestDigest,
   EvolverClient,
 } from "../src/clients/evolver.js";
@@ -14,7 +15,10 @@ import {
   buildEvolutionLLMSnapshot,
   USER_LLM_SNAPSHOT_KEY,
 } from "../src/mastra/llm/evolution-snapshot.js";
-import { getApprovedEvolutionRunContext } from "../src/tools/evolver-shared.js";
+import {
+  getApprovedEvolutionRunContext,
+  getAutomaticEventCampaignContext,
+} from "../src/tools/evolver-shared.js";
 
 const snapshot = buildEvolutionLLMSnapshot({
   id: "config-1",
@@ -94,6 +98,43 @@ describe("EvolverClient", () => {
       request_digest: evolutionRequestDigest(approved.request),
     });
     expect(Number(credential.exp) - Number(credential.iat)).toBe(108_000);
+  });
+
+  it("marks automatic campaign grants for bounded restart recovery", async () => {
+    const keys = generateKeyPairSync("ed25519");
+    vi.stubEnv(
+      "EVOLUTION_CREDENTIAL_PRIVATE_KEY_B64",
+      keys.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64"),
+    );
+    const requestContext = new Map<string, unknown>([
+      [AUTH_SUB_KEY, "user:alice"],
+      [USER_LLM_SNAPSHOT_KEY, snapshot],
+    ]);
+    const config = {
+      venue: "binance",
+      symbol: "BTCUSDT",
+      timeframe: "1h" as const,
+      from_ts: "2026-08-01T00:00:00Z",
+      as_of: "2026-08-02T00:00:00Z",
+    };
+
+    const campaign = await getAutomaticEventCampaignContext(
+      { eventSnapshotId: "11111111-1111-4111-8111-111111111111", config },
+      requestContext,
+    );
+    const { payload } = await jwtVerify(campaign.credentialGrant, keys.publicKey, {
+      algorithms: ["EdDSA"],
+      audience: "inalpha-dashboard-credential",
+    });
+
+    expect(payload.grant_purpose).toBe("event_campaign");
+    expect(campaign.request).toEqual(
+      buildEventCampaignRequest({
+        eventSnapshotId: "11111111-1111-4111-8111-111111111111",
+        config,
+        llmSnapshot: snapshot,
+      }),
+    );
   });
 
   it("retries 502/504 with the same approval-derived operation ID", async () => {
