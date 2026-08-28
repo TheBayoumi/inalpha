@@ -5,6 +5,13 @@ import logging
 import sys
 
 import structlog
+from structlog.tracebacks import ExceptionDictTransformer
+
+# traceback 保留调用栈，但绝不序列化 frame locals。FastAPI/Starlette 的局部变量可能
+# 持有原始 request body，其中会包含密码、激活令牌与 API key。
+_SAFE_EXCEPTION_RENDERER = structlog.processors.ExceptionRenderer(
+    ExceptionDictTransformer(show_locals=False)
+)
 
 
 def configure_logging(level: str = "INFO", service_name: str = "unknown") -> None:
@@ -24,7 +31,7 @@ def configure_logging(level: str = "INFO", service_name: str = "unknown") -> Non
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.dict_tracebacks,
+            _SAFE_EXCEPTION_RENDERER,
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),

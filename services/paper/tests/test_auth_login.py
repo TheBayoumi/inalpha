@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 
+import anyio
 import pytest
 import pytest_asyncio
 from argon2 import PasswordHasher
@@ -114,3 +115,19 @@ def test_login_rate_limited_after_repeated_failures(
         "/auth/login", json={"email": _TEST_EMAIL, "password": _TEST_PASSWORD}
     )
     assert r.status_code == 429
+
+
+def test_login_argon2_gate_rejects_without_queueing(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Argon2 槽位饱和时立即 429，不为不同邮箱建立无界等待队列。"""
+    monkeypatch.setattr(auth_mod, "_login_hash_slots", anyio.Semaphore(0))
+
+    response = client.post(
+        "/auth/login",
+        json={"email": "fresh-address@example.com", "password": "anything"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["code"] == "LOGIN_BUSY"
+    assert "fresh-address@example.com" not in auth_mod._login_failures

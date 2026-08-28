@@ -17,7 +17,8 @@ Commands:
   down                         Stop the self-host stack
   logs [service]               Follow service logs
   status                       Show service status
-  create-user --email EMAIL    Create the initial dashboard user securely
+  create-user --email EMAIL [--roles ROLES] [--subject SUBJECT]
+                               Create or update a dashboard user securely
 EOF
 }
 
@@ -76,10 +77,22 @@ PY
 create_user() {
   require_env
   local email=""
+  local roles=""
+  local roles_set="false"
+  local subject="console:dev"
   while (($#)); do
     case "$1" in
       --email)
         email="${2:-}"
+        shift 2
+        ;;
+      --roles)
+        roles="${2:-}"
+        roles_set="true"
+        shift 2
+        ;;
+      --subject)
+        subject="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -103,9 +116,12 @@ create_user() {
     printf 'Password cannot be empty.\n' >&2
     exit 2
   fi
+  local user_args=(--email "$email" --subject "$subject" --password-stdin)
+  if [[ "$roles_set" == "true" ]]; then
+    user_args+=(--roles "$roles")
+  fi
   printf '%s' "$password" | "${COMPOSE[@]}" run --rm -T paper \
-    uv run python scripts/create_user.py \
-    --email "$email" --subject console:dev --password-stdin
+    uv run python scripts/create_user.py "${user_args[@]}"
 }
 
 command="${1:-}"
