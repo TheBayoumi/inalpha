@@ -8,6 +8,7 @@ from uuid import UUID
 
 import httpx
 import jwt
+from inalpha_shared.errors import InalphaError, NotFoundError
 
 from .config import EvolverSettings
 
@@ -30,13 +31,45 @@ async def fetch_event_snapshot(
         algorithm=settings.jwt_algorithm,
     )
     url = f"{settings.data_service_url.rstrip('/')}/events/snapshots/{snapshot_id}"
-    async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
-        response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        async with httpx.AsyncClient(timeout=15.0, trust_env=False) as client:
+            response = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+    except httpx.RequestError as exc:
+        raise InalphaError(
+            "event snapshot data service is unreachable",
+            code="EVENT_DATA_UNREACHABLE",
+            status_code=502,
+        ) from exc
     if response.status_code != 200:
-        raise RuntimeError(f"event snapshot unavailable: HTTP {response.status_code}")
+        try:
+            detail = response.json()
+        except ValueError:
+            detail = {}
+        payload_detail = detail.get("detail", detail) if isinstance(detail, dict) else {}
+        code = (
+            str(payload_detail.get("code"))
+            if isinstance(payload_detail, dict) and payload_detail.get("code")
+            else "EVENT_SNAPSHOT_UNAVAILABLE"
+        )
+        message = (
+            str(payload_detail.get("message"))
+            if isinstance(payload_detail, dict) and payload_detail.get("message")
+            else f"event snapshot unavailable: HTTP {response.status_code}"
+        )
+        if response.status_code == 404:
+            raise NotFoundError(message, code=code)
+        raise InalphaError(
+            message,
+            code=code,
+            status_code=response.status_code if response.status_code in {401, 403, 503} else 502,
+        )
     payload = response.json()
     if not isinstance(payload, dict) or payload.get("snapshot_id") != str(snapshot_id):
-        raise RuntimeError("event snapshot response identity mismatch")
+        raise InalphaError(
+            "event snapshot response identity mismatch",
+            code="EVENT_SNAPSHOT_IDENTITY_MISMATCH",
+            status_code=502,
+        )
     return payload
 
 
