@@ -82,7 +82,24 @@ sequenceDiagram
 | data 多市场服务 | `services/data/` | CCXT / akshare / yfinance / FRED / web → Postgres + TimescaleDB |
 | research + factor | `services/research/` · `services/factor/` | 三方研究辩论；因子血缘、IC、衰减与发现工作流 |
 | E1 Evolver | `services/evolver/` | frozen bars + unified diff + owner-scoped 异步 run/slot + PostgreSQL 候选审计 |
-| 认证控制台 | `apps/dashboard/` | 登录/session、agent 对话、逐用户 LLM 配置、演化/回测/runner/因子/风控看板 |
+| 认证控制台 | `apps/dashboard/` | 登录/session、注册 waitlist、admin 审核、逐用户 LLM 配置、演化/回测/runner/因子/风控看板 |
+
+### 注册与试用准入（2026-08-28）
+
+- 登录页提供中英文“申请试用”入口；公开注册只创建 `users.access_status='pending'`，
+  不接收密码、不签 session，也不会立即获得控制台访问权。
+- 管理员批准后账号进入 `invited`，API 只返回一次明文激活令牌并在数据库保存 SHA-256
+  哈希。管理员必须通过邮件把 fragment 激活链接发到申请邮箱；链接 48 小时过期，可重发。
+  申请人设置 Argon2 密码后才原子转换为 `active`，令牌随即失效。
+- 批准、拒绝、激活链接轮换和最终激活会追加写入 `user_access_events`；事件记录操作者、
+  前后状态、令牌哈希指纹和 trace id，不保存明文令牌或密码。
+- `admin@inalpha.dev` 需通过 `create-user --roles admin` 显式授予角色；审核 API 每次从
+  数据库实时读取角色，不信任前端菜单或旧 session。迁移不会按邮箱静默提权。
+- 注册对重复邮箱统一返回 202，不覆盖原申请也不泄露邮箱是否存在；服务内有 per-email +
+  global 双层限流。登录/激活的 Argon2 工作分别使用独立、非排队并发门控，计算期间
+  不占数据库连接。
+- 公网部署必须在反向代理 / CDN 对 `/api/auth/register` 启用持久化 per-IP 限流或人机
+  验证；应用进程内限流仅作为第二道防线。
 
 ---
 

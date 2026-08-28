@@ -1,7 +1,8 @@
 """创建 / 改密一个登录用户。
 
-多用户登录暂不做注册 UI —— 初始用户和改密都走本 CLI。密码用 argon2 哈希后落
-``users`` 表,``ON CONFLICT (subject) DO UPDATE`` 幂等(重跑 = 改密 / 改邮箱)。
+公开注册会进入 waitlist；初始管理员、紧急改密与受控运维建号仍走本 CLI。密码用
+argon2 哈希后落 ``users`` 表,``ON CONFLICT (subject) DO UPDATE`` 幂等
+(重跑 = 改密 / 改邮箱)。
 
 用法::
 
@@ -24,6 +25,7 @@
   history / ``ps aux``。``--password`` 仍支持但会告警(留痕风险)。
 - ``--subject`` 是 JWT ``sub``,也是 paper ``account_id_from_sub`` 的派生源;改它 = 换账户。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -48,24 +50,42 @@ async def _upsert_user(
     email: str,
     password: str,
     username: str | None,
-    roles: list[str],
+    roles: list[str] | None,
 ) -> None:
     password_hash = _hasher.hash(password)
     async with get_conn() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                """
-                INSERT INTO users (subject, email, username, password_hash, roles)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (subject) DO UPDATE SET
-                    email         = EXCLUDED.email,
-                    username      = EXCLUDED.username,
-                    password_hash = EXCLUDED.password_hash,
-                    roles         = EXCLUDED.roles,
-                    updated_at    = now()
-                """,
-                (subject, email, username, password_hash, roles),
-            )
+            if roles is None:
+                await cur.execute(
+                    """
+                    INSERT INTO users (
+                        subject, email, username, password_hash, roles, access_status
+                    )
+                    VALUES (%s, %s, %s, %s, '{}', 'active')
+                    ON CONFLICT (subject) DO UPDATE SET
+                        email         = EXCLUDED.email,
+                        username      = EXCLUDED.username,
+                        password_hash = EXCLUDED.password_hash,
+                        updated_at    = now()
+                    """,
+                    (subject, email, username, password_hash),
+                )
+            else:
+                await cur.execute(
+                    """
+                    INSERT INTO users (
+                        subject, email, username, password_hash, roles, access_status
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'active')
+                    ON CONFLICT (subject) DO UPDATE SET
+                        email         = EXCLUDED.email,
+                        username      = EXCLUDED.username,
+                        password_hash = EXCLUDED.password_hash,
+                        roles         = EXCLUDED.roles,
+                        updated_at    = now()
+                    """,
+                    (subject, email, username, password_hash, roles),
+                )
             await conn.commit()
 
 
@@ -97,7 +117,9 @@ async def _amain(args: argparse.Namespace) -> int:
     )
     subject = args.subject or f"user:{uuid4()}"
     email = args.email.strip()  # 存 strip 后的邮箱,与登录端点的 email_key 口径一致
-    roles = [r.strip() for r in (args.roles or "").split(",") if r.strip()]
+    roles = (
+        [r.strip() for r in args.roles.split(",") if r.strip()] if args.roles is not None else None
+    )
     password = _resolve_password(args)
 
     await init_pool(db_url)
@@ -112,7 +134,8 @@ async def _amain(args: argparse.Namespace) -> int:
     finally:
         await close_pool()
 
-    print(f"✔ 用户已写入:email={email!r} subject={subject!r} roles={roles}")
+    role_message = roles if roles is not None else "preserved on update"
+    print(f"✔ 用户已写入:email={email!r} subject={subject!r} roles={role_message}")
     print("  用该邮箱 + 密码在 dashboard /login 登录即可。")
     return 0
 
@@ -136,7 +159,11 @@ def main() -> int:
         help="JWT sub(= account 派生源)。作者继承现有数据用 'console:dev';省略则生成 user:<uuid4>",
     )
     parser.add_argument("--username", default=None, help="可选备用登录名")
-    parser.add_argument("--roles", default="", help="逗号分隔角色(预留,v1 不做权限门)")
+    parser.add_argument(
+        "--roles",
+        default=None,
+        help="逗号分隔角色；省略时更新账号会保留原角色，waitlist 管理员使用 admin",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)

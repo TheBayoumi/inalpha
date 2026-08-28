@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   Sigma,
   Sparkles,
+  UserRoundCheck,
   Workflow,
   X,
   type LucideIcon,
@@ -44,6 +45,8 @@ interface NavItem {
   soon?: boolean;
   /** 自定义点击处理（不为空时替代 href 导航）。 */
   onClick?: () => void;
+  /** 只有 session 具备 admin 角色时显示。 */
+  adminOnly?: boolean;
 }
 
 // 顺序按「看板 → 研究 → 执行 → 风控 → 彩蛋 → 日志」的操作动线:
@@ -59,6 +62,7 @@ const NAV: NavItem[] = [
   // 玄学彩蛋占卜台(纯娱乐)
   { key: "divination", href: "/divination", icon: Sparkles },
   { key: "activity", href: "/activity", icon: Activity },
+  { key: "waitlist", href: "/admin/waitlist", icon: UserRoundCheck, adminOnly: true },
 ];
 
 const LS_COLLAPSED = "inalpha-sidebar-collapsed";
@@ -81,7 +85,11 @@ export function ConsoleSidebar() {
   const { data: versionData } = useSWR<{ date: string }>("/api/version", (url: string) =>
     fetch(url).then((r) => r.json()),
   );
+  const { data: sessionData } = useSWR<{
+    user: { roles?: string[] } | null;
+  }>("/api/auth/session", (url: string) => fetch(url).then((r) => r.json()));
   const buildDate = versionData?.date ?? "—";
+  const isAdmin = sessionData?.user?.roles?.includes("admin") ?? false;
 
   // 桌面折叠态持久化(mount 后读,避免 SSR/CSR 首帧不一致)。
   useEffect(() => {
@@ -157,6 +165,7 @@ export function ConsoleSidebar() {
           collapsed={collapsed}
           onToggleCollapsed={toggleCollapsed}
           buildDate={buildDate}
+          isAdmin={isAdmin}
         />
       </aside>
 
@@ -183,6 +192,7 @@ export function ConsoleSidebar() {
           onNavigate={() => setMobileOpen(false)}
           onMobileClose={() => setMobileOpen(false)}
           buildDate={buildDate}
+          isAdmin={isAdmin}
         />
       </aside>
     </>
@@ -199,6 +209,7 @@ function SidebarBody({
   onNavigate,
   onMobileClose,
   buildDate,
+  isAdmin,
 }: {
   t: ReturnType<typeof useTranslations>;
   llmLabel: string;
@@ -208,6 +219,7 @@ function SidebarBody({
   onNavigate?: () => void;
   onMobileClose?: () => void;
   buildDate: string;
+  isAdmin: boolean;
 }) {
   // 配置下拉菜单
   const [configMenuOpen, setConfigMenuOpen] = useState(false);
@@ -314,7 +326,7 @@ function SidebarBody({
 
       {/* Nav —— 折叠态仅图标(居中 + 右侧气泡显示菜单名)。 */}
       <nav className="flex flex-1 flex-col gap-0.5 p-3">
-        {NAV.map((item) => {
+        {NAV.filter((item) => !item.adminOnly || isAdmin).map((item) => {
           const active = !item.soon && pathname === item.href;
           const Icon = item.icon;
           const inner = (

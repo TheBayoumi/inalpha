@@ -1,11 +1,16 @@
 """测试 install_error_handler 把各类异常统一包装成 ``{code, message, details}``。"""
 from __future__ import annotations
 
+import json
+
+import pytest
+import structlog
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from inalpha_shared.errors import NotFoundError, ValidationError
+from inalpha_shared.logging import configure_logging
 from inalpha_shared.middleware import install_error_handler, install_request_logging
 
 
@@ -98,3 +103,25 @@ def test_trace_id_auto_generated_when_missing() -> None:
     r = client.get("/business-validation")
     assert "x-trace-id" in r.headers
     assert len(r.headers["x-trace-id"]) == 36  # UUID
+
+
+def test_exception_log_omits_frame_locals(capsys: pytest.CaptureFixture[str]) -> None:
+    """异常 JSON 保留堆栈，但不得序列化含密码的 frame locals。"""
+    configure_logging(service_name="security-test")
+    secret_password = "do-not-log-this-password"
+
+    try:
+        raise RuntimeError("expected test failure")
+    except RuntimeError:
+        structlog.get_logger("security-test").exception("request_failed")
+
+    captured = capsys.readouterr()
+    event = json.loads(captured.out.strip().splitlines()[-1])
+    rendered = json.dumps(event)
+    assert event["exception"]
+    assert secret_password not in rendered
+    assert all(
+        "locals" not in frame
+        for stack in event["exception"]
+        for frame in stack["frames"]
+    )
