@@ -9,6 +9,8 @@ import { readSession } from "@/lib/session";
 export async function GET(): Promise<Response> {
   const session = await readSession();
   return NextResponse.json({
-    user: session ? { email: session.email, subject: session.subject } : null,
+    user: session
+      ? { email: session.email, subject: session.subject, roles: session.roles }
+      : null,
   });
 }

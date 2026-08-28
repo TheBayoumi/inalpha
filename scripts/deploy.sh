@@ -21,9 +21,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 COMPOSE_FILE="infra/docker-compose.prod.yml"
-ENV_FILE="infra/.env.prod"
+HOST_ENV_FILE="infra/.env.prod"
+# Compose 内的 env_file 相对 compose 文件解析，因此容器侧仍使用文件名。
 export ENV_FILE=.env.prod
-DC=(docker compose --profile tunnel -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
+DC=(docker compose --profile tunnel -f "$COMPOSE_FILE" --env-file "$HOST_ENV_FILE")
 
 do_git_pull=1
 mode="image" # image | build
@@ -37,12 +38,12 @@ for arg in "$@"; do
   esac
 done
 
-[ -f "$ENV_FILE" ] || {
-  echo "缺 $ENV_FILE —— 从 infra/.env.prod.example 复制并填值" >&2
+[ -f "$HOST_ENV_FILE" ] || {
+  echo "缺 $HOST_ENV_FILE —— 从 infra/.env.prod.example 复制并填值" >&2
   exit 1
 }
 
-if ! grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+$' "$ENV_FILE"; then
+if ! grep -qE '^CLOUDFLARE_TUNNEL_TOKEN=.+$' "$HOST_ENV_FILE"; then
   echo "缺 CLOUDFLARE_TUNNEL_TOKEN ——生产 tunnel profile 无法启动" >&2
   exit 1
 fi

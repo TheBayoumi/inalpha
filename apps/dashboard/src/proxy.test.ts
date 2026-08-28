@@ -40,4 +40,17 @@ describe("dashboard production proxy", () => {
 
     expect(response.status).toBe(401);
   });
+
+  it.each(["/register", "/activate", "/api/auth/register", "/api/auth/activate"])(
+    "keeps the public access flow reachable at %s",
+    async (pathname) => {
+      const middleware = await productionMiddleware();
+      const response = await middleware(
+        new NextRequest(`http://dashboard.test${pathname}`),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    },
+  );
 });

@@ -46,7 +46,11 @@ export default async function middleware(req: NextRequest): Promise<Response> {
   const isCredentialExchange =
     req.method === "GET" && /^\/api\/internal\/llm-config\/[^/]+$/.test(pathname);
   const isPublic =
-    pathname === "/login" || pathname.startsWith("/api/auth/") || isCredentialExchange;
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname === "/activate" ||
+    pathname.startsWith("/api/auth/") ||
+    isCredentialExchange;
 
   if (AUTH_ENABLED && !isPublic && !(await hasValidSession(req))) {
     if (isApi) {
@@ -61,7 +65,12 @@ export default async function middleware(req: NextRequest): Promise<Response> {
   }
 
   // /api 与 /login 不走 locale 协商;其余页面交给 next-intl。
-  if (isApi || pathname === "/login") {
+  if (
+    isApi ||
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname === "/activate"
+  ) {
     return NextResponse.next();
   }
   return intl(req);
