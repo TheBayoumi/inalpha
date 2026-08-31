@@ -39,17 +39,30 @@ function response(status: number): Response {
   );
 }
 
-function campaignResponse(status = 200): Response {
+function campaignResponse(
+  status = 200,
+  campaignStatus = "replaying",
+): Response {
   return new Response(
     JSON.stringify({
       campaign_id: "33333333-3333-4333-8333-333333333333",
-      status: "replaying",
-      active_generation: 1,
+      status: campaignStatus,
+      active_generation: campaignStatus === "draft" ? 0 : 1,
       max_generations: 5,
       event_snapshot_id: "11111111-1111-4111-8111-111111111111",
       llm_cost_usd: 0,
     }),
     { status, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+function campaignConflict(): Response {
+  return new Response(
+    JSON.stringify({
+      code: "CAMPAIGN_STATE_CONFLICT",
+      message: "campaign cannot start",
+    }),
+    { status: 409, headers: { "Content-Type": "application/json" } },
   );
 }
 
@@ -160,7 +173,7 @@ describe("EvolverClient", () => {
     );
   });
 
-  it("uses the approved E2 operation ID as the campaign idempotency key on retry", async () => {
+  it("recovers a lost start response by returning the already-started campaign on whole-operation retry", async () => {
     const request = buildEventCampaignRequest({
       eventSnapshotId: "11111111-1111-4111-8111-111111111111",
       config: {
@@ -174,10 +187,9 @@ describe("EvolverClient", () => {
     });
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(campaignResponse(201))
-      .mockResolvedValueOnce(campaignResponse())
-      .mockResolvedValueOnce(campaignResponse(201))
-      .mockResolvedValueOnce(campaignResponse());
+      .mockResolvedValueOnce(campaignResponse(201, "draft"))
+      .mockRejectedValueOnce(new TypeError("start response lost"))
+      .mockResolvedValueOnce(campaignResponse(201, "replaying"));
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new EvolverClient({
@@ -190,10 +202,15 @@ describe("EvolverClient", () => {
       credentialGrant: "event-campaign-grant",
     };
 
-    await client.startEventCampaign(options);
-    await client.startEventCampaign(options);
+    await expect(client.startEventCampaign(options)).rejects.toMatchObject({
+      code: "UPSTREAM_UNREACHABLE",
+    });
+    await expect(client.startEventCampaign(options)).resolves.toMatchObject({
+      campaign_id: "33333333-3333-4333-8333-333333333333",
+      status: "replaying",
+    });
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     for (const index of [0, 2]) {
       const [url, init] = fetchMock.mock.calls[index] as [string, RequestInit];
       expect(url).toContain("/api/v1/campaigns");
@@ -206,6 +223,76 @@ describe("EvolverClient", () => {
       );
       expect(init.body).not.toContain("not-forwarded");
     }
+  });
+
+  it("reconciles a concurrent E2 start conflict when the campaign already advanced", async () => {
+    const request = buildEventCampaignRequest({
+      eventSnapshotId: "11111111-1111-4111-8111-111111111111",
+      config: {
+        venue: "binance",
+        symbol: "BTCUSDT",
+        timeframe: "1h",
+        from_ts: "2026-08-01T00:00:00Z",
+        as_of: "2026-08-02T00:00:00Z",
+      },
+      llmSnapshot: snapshot,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(campaignResponse(201, "draft"))
+      .mockResolvedValueOnce(campaignConflict())
+      .mockResolvedValueOnce(campaignResponse(200, "replaying"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new EvolverClient({
+        baseUrl: "http://evolver.test",
+        token: "owner-token",
+      }).startEventCampaign({
+        request,
+        idempotencyKey: "approval-operation-e2",
+        credentialGrant: "event-campaign-grant",
+      }),
+    ).resolves.toMatchObject({ status: "replaying" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/start");
+    expect(String(fetchMock.mock.calls[2]?.[0])).not.toContain("/start");
+  });
+
+  it("preserves E2 start conflicts when reconciliation still finds a draft campaign", async () => {
+    const request = buildEventCampaignRequest({
+      eventSnapshotId: "11111111-1111-4111-8111-111111111111",
+      config: {
+        venue: "binance",
+        symbol: "BTCUSDT",
+        timeframe: "1h",
+        from_ts: "2026-08-01T00:00:00Z",
+        as_of: "2026-08-02T00:00:00Z",
+      },
+      llmSnapshot: snapshot,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(campaignResponse(201, "draft"))
+      .mockResolvedValueOnce(campaignConflict())
+      .mockResolvedValueOnce(campaignResponse(200, "draft"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new EvolverClient({
+        baseUrl: "http://evolver.test",
+        token: "owner-token",
+      }).startEventCampaign({
+        request,
+        idempotencyKey: "approval-operation-e2",
+        credentialGrant: "event-campaign-grant",
+      }),
+    ).rejects.toMatchObject({
+      code: "CAMPAIGN_STATE_CONFLICT",
+      status: 409,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("retries 502/504 with the same approval-derived operation ID", async () => {
