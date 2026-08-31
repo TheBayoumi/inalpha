@@ -252,7 +252,9 @@ describe("PendingApprovalsStore", () => {
     expect(await initial).toBe(view.requestId);
     expect(await concurrent).toBe(view.requestId);
     expect(persistence.rememberEvolutionOperation).toHaveBeenCalledTimes(1);
-    expect(persistence.claimEvolutionOperation).toHaveBeenCalledTimes(1);
+    // Initial consumption probes for a prior durable retry before persisting this approval;
+    // the serialized concurrent call performs the second claim and consumes that retry.
+    expect(persistence.claimEvolutionOperation).toHaveBeenCalledTimes(2);
     expect(await store.consumeApproved(consume)).toBeUndefined();
     store.clearAll();
   });
