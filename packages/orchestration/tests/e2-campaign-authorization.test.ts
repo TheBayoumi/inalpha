@@ -102,7 +102,7 @@ describe("E2 campaign authorization", () => {
     store.clearAll();
   });
 
-  it("propagates and reuses the trusted approval operation ID for retry", async () => {
+  it("allows exactly one matching compensation retry for the approved E2 operation", async () => {
     const { store, execute, wrapped } = makeApprovedTool();
     const ctx = context();
 
@@ -116,11 +116,40 @@ describe("E2 campaign authorization", () => {
 
     const first = (await wrapped.execute!(campaignInput, ctx)) as { operationId: string };
     const retry = (await wrapped.execute!(campaignInput, ctx)) as { operationId: string };
+    const exhausted = (await wrapped.execute!(campaignInput, ctx)) as {
+      requiresApproval: boolean;
+      requestId: string;
+    };
 
     expect(first.operationId).toBe(pending.requestId);
     expect(retry.operationId).toBe(pending.requestId);
+    expect(exhausted.requiresApproval).toBe(true);
+    expect(exhausted.requestId).not.toBe(pending.requestId);
     expect(execute).toHaveBeenCalledTimes(2);
     store.clearAll();
+  });
+
+  it("expires the E2 compensation retry after two minutes", async () => {
+    vi.useFakeTimers();
+    const { store, execute, wrapped } = makeApprovedTool();
+    const ctx = context();
+
+    const pending = (await wrapped.execute!(campaignInput, ctx)) as { requestId: string };
+    expect(store.respond(pending.requestId, "allow", "user:alice")).toBe(true);
+    const first = (await wrapped.execute!(campaignInput, ctx)) as { operationId: string };
+    expect(first.operationId).toBe(pending.requestId);
+
+    vi.advanceTimersByTime(2 * 60 * 1_000 + 1);
+    const expired = (await wrapped.execute!(campaignInput, ctx)) as {
+      requiresApproval: boolean;
+      requestId: string;
+    };
+
+    expect(expired.requiresApproval).toBe(true);
+    expect(expired.requestId).not.toBe(pending.requestId);
+    expect(execute).toHaveBeenCalledTimes(1);
+    store.clearAll();
+    vi.useRealTimers();
   });
 
   it("does not consume an approval after material campaign input is changed", async () => {

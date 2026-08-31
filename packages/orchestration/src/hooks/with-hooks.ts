@@ -58,6 +58,7 @@ const DURABLE_EVOLUTION_APPROVAL_TOOLS = new Set([
   "evolver.run_evolution",
   "evolver.run_event_campaign",
 ]);
+const E2_CAMPAIGN_RETRY_WINDOW_MS = 2 * 60 * 1_000;
 
 /**
  * mastra ``server.middleware`` 从 Bearer JWT 解出的已认证主体（sub）写进 RequestContext
@@ -232,7 +233,11 @@ export function withHooks<T extends GenericTool>(tool: T, opts: WithHooksOptions
             sessionId,
             toolName,
             approvalInput,
-            reuseAfterConsume: durableEvolutionApproval,
+            reuseAfterConsume: toolName === "evolver.run_evolution",
+            reuseOnceAfterConsumeMs:
+              toolName === "evolver.run_event_campaign"
+                ? E2_CAMPAIGN_RETRY_WINDOW_MS
+                : undefined,
           });
           if (!operationId) {
             const approvalViewInput = llmSnapshot
