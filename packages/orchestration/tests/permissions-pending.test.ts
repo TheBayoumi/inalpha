@@ -189,6 +189,74 @@ describe("PendingApprovalsStore", () => {
     store.clearAll();
   });
 
+  it("serializes concurrent initial E2 consumption into initial plus one retry", async () => {
+    let releasePersist!: () => void;
+    const persistGate = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    const operations = new Map<string, { operationId: string; expiresAt: string }>();
+    const persistence = {
+      insertPending: vi.fn(async () => {}),
+      markResolved: vi.fn(async () => {}),
+      rememberEvolutionOperation: vi.fn(async (scope: {
+        inputDigest: string;
+        operationId: string;
+        retentionMs?: number;
+      }) => {
+        await persistGate;
+        const value = {
+          operationId: scope.operationId,
+          expiresAt: new Date(Date.now() + (scope.retentionMs ?? 86_400_000)).toISOString(),
+        };
+        operations.set(scope.inputDigest, value);
+        return { expiresAt: value.expiresAt };
+      }),
+      findEvolutionOperation: vi.fn(async (scope: { inputDigest: string }) =>
+        operations.get(scope.inputDigest),
+      ),
+      claimEvolutionOperation: vi.fn(async (scope: { inputDigest: string }) => {
+        const value = operations.get(scope.inputDigest);
+        if (!value || Date.now() >= Date.parse(value.expiresAt)) return undefined;
+        operations.delete(scope.inputDigest);
+        return value;
+      }),
+    };
+    const args = {
+      authSub: "user:alice",
+      sessionId: "thread-E2",
+      toolName: "evolver.run_event_campaign",
+      toolInput: { eventSnapshotId: "event-1" },
+      approvalInput: {
+        request: { eventSnapshotId: "event-1" },
+        llm_snapshot: { config_digest: "digest" },
+      },
+      timeoutMs: 5_000,
+    };
+    const store = new PendingApprovalsStore(() => {}, persistence);
+    const view = store.request(args);
+    expect(store.respond(view.requestId, "allow", args.authSub)).toBe(true);
+    const consume = {
+      authSub: args.authSub,
+      sessionId: args.sessionId,
+      toolName: args.toolName,
+      approvalInput: args.approvalInput,
+      reuseOnceAfterConsumeMs: 120_000,
+    };
+
+    const initial = store.consumeApproved(consume);
+    const concurrent = store.consumeApproved(consume);
+    await Promise.resolve();
+    expect(persistence.rememberEvolutionOperation).toHaveBeenCalledTimes(1);
+
+    releasePersist();
+    expect(await initial).toBe(view.requestId);
+    expect(await concurrent).toBe(view.requestId);
+    expect(persistence.rememberEvolutionOperation).toHaveBeenCalledTimes(1);
+    expect(persistence.claimEvolutionOperation).toHaveBeenCalledTimes(1);
+    expect(await store.consumeApproved(consume)).toBeUndefined();
+    store.clearAll();
+  });
+
   it("atomically allows only one bounded recovery across fresh stores", async () => {
     const operations = new Map<string, { operationId: string; expiresAt: string }>();
     const persistence = {

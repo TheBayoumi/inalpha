@@ -99,6 +99,7 @@ export class PendingApprovalsStore {
   private readonly records = new Map<string, PendingApprovalRecord>();
   private readonly identityIndex = new Map<string, string>();
   private readonly consumedByIdentity = new Map<string, ConsumedApprovalRecord>();
+  private readonly consumingByIdentity = new Map<string, Promise<string | undefined>>();
   private readonly telemetry: PendingTelemetrySink;
   private readonly persistence?: ApprovalPersistence;
 
@@ -179,6 +180,27 @@ export class PendingApprovalsStore {
   /** Atomically consumes one approved decision and returns its restart-stable operation ID. */
   async consumeApproved(args: PendingConsumeArgs): Promise<string | undefined> {
     const identity = this.identityFor(args);
+    const inFlight = this.consumingByIdentity.get(identity);
+    if (inFlight) {
+      await inFlight;
+      return await this.consumeApproved(args);
+    }
+
+    const run = this.consumeApprovedUnlocked(args, identity);
+    this.consumingByIdentity.set(identity, run);
+    try {
+      return await run;
+    } finally {
+      if (this.consumingByIdentity.get(identity) === run) {
+        this.consumingByIdentity.delete(identity);
+      }
+    }
+  }
+
+  private async consumeApprovedUnlocked(
+    args: PendingConsumeArgs,
+    identity: string,
+  ): Promise<string | undefined> {
     const scope = this.operationScope(args);
     const boundedRetryMs =
       args.reuseOnceAfterConsumeMs && args.reuseOnceAfterConsumeMs > 0
